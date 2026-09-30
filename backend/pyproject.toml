@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["live: usa Atlas e LLM REAIS (custa tokens, escreve com customer_key descartável); só roda com LIVE=1"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+

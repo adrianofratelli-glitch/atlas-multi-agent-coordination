@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Antes de publicar: lint (igual ao CI), testes offline e testes LIVE (Atlas + LLM reais).
+# DEMO_MODE esconde bugs do driver real (datetimes naive, ObjectId cru, documentos legados), então o push
+# só passa se o modo live também passar. Pular conscientemente: SKIP_LIVE=1 git push
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)/backend"
+PY=../.venv/bin
+
+echo "[pre-push] ruff"; $PY/ruff check .
+echo "[pre-push] pytest (offline)"; $PY/pytest -q
+if [[ "${SKIP_LIVE:-0}" == "1" ]]; then
+  echo "[pre-push] SKIP_LIVE=1: testes live pulados"
+elif [[ -f ../.env ]] && grep -q '^MONGODB_URI=.' ../.env; then
+  echo "[pre-push] pytest LIVE (custa tokens, ~2 min)"; LIVE=1 $PY/pytest tests/test_live.py -q
+else
+  echo "[pre-push] sem .env/MONGODB_URI: testes live pulados"
+fi

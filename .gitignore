@@ -1,0 +1,25 @@
+.env
+.env.bak*
+.env.*.bak
+frontend/.env
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+frontend/node_modules/
+frontend/dist/
+.DS_Store
+backend/__pycache__/
+backend/app/__pycache__/
+backend/tests/__pycache__/
+
+docs/Guia-PoV-Multi-Agent.pdf
+
+# Local-only artifacts (internal material, never commit)
+.env.bak
+*.env.bak
+outputs/
+pov-agent-memory-mongodb-template.pdf
