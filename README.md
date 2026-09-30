@@ -179,3 +179,7 @@ Set `ENVIRONMENT=production`, `AUTH_REQUIRED=1`, and `DEMO_TOKEN_ISSUANCE_ENABLE
 [Architecture](docs/architecture.md) · [ADR-001: document-oriented coordination](docs/adr/ADR-001-arquitetura-multi-agente.md) · [ADR-002: LLM memory and personal turns outside the cache](docs/adr/ADR-002-memoria-llm-e-turno-pessoal.md) · [ADR-003: two-band guardrail and out of scope](docs/adr/ADR-003-guardrail-em-duas-faixas.md) · [ADR-004: embedding scope and situation-based measurement](docs/adr/ADR-004-escopo-por-embedding-e-medicao-por-situacoes.md) · [Chaos report](docs/chaos-report.md) · [Eval format](eval/FORMAT.md)
 
 The ADRs and briefing documents are written in Brazilian Portuguese.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
