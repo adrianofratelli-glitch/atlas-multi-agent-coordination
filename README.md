@@ -117,6 +117,8 @@ conv-8b3ca34a297a         20     2       0  0.00000  agent [order_agent] 3ms  ER
 
 ## Flags (all opt-in; with none of them, behavior is unchanged)
 
+> `TRACE_SINK` and `GUARDRAILS_EDGE` rely on optional helper packages that are not part of this repository. Without them both features fail open and are no-ops.
+
 | Flag | Default | What it enables |
 |---|---|---|
 | `TRACE_SINK` | `off` | OpenTelemetry tracing: `console`, `phoenix`, or `atlas` (spans become documents) |
