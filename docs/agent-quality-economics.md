@@ -8,7 +8,7 @@ central de múltiplas aplicações.
 ## Configuração local
 
 No `.env`, preencher `GROVE_API_KEY`. A URL Anthropic conhecida está em
-`GROVE_ANTHROPIC_BASE_URL`. O header Grove é `api-key`; acesso direto Anthropic usa
+`GROVE_ANTHROPIC_BASE_URL`. A autenticação Grove é `Authorization: Bearer` mais a chave real em `x-api-key` (o gateway rejeita placeholder); acesso direto Anthropic usa
 a credencial própria e o header do SDK. Redirecionamentos HTTP ficam desabilitados.
 
 Para modelos expostos por Chat Completions, obter do Grove:
@@ -97,8 +97,7 @@ via rota Anthropic com `claude-haiku-4-5` funcionou e reportou 29 tokens de entr
 5 de saída. Isso valida conectividade/autenticação dessa rota, não a qualidade dos
 29 cenários com LLM nem os demais provedores.
 
-Também foi validado `gpt-5.6-luna` no endpoint fornecido pelo portal Grove:
-`https://grove-gateway-prod.azure-api.net/grove-foundry-prod/openai/v1/chat/completions`.
+Também foi validado `gpt-5.6-luna` no endpoint chat/completions do gateway Grove anterior (o gateway atual só atende o luna pela Responses API, ainda não implementada aqui).
 O teste mínimo reportou 32 tokens de entrada e 4 de saída. Em um turno fan-out com
 fixtures sintéticas em memória e LLMs reais, `billing_agent` usou Claude Haiku
 (566 tokens de entrada, 50 de saída, 1766 ms) e `order_agent` usou GPT Luna
