@@ -41,7 +41,7 @@ def test_cost_per_success_includes_failed_tasks_and_no_success_is_undefined():
     assert summarize_evals(results[1:])["cost_per_success_usd"] is None
 
 
-@pytest.mark.parametrize("url", ["https://evil.test/", "https://grove-gateway-prod.azure-api.net.evil.test/", "http://grove-gateway-prod.azure-api.net/", "https://user@ grove-gateway-prod.azure-api.net/"])
+@pytest.mark.parametrize("url", ["https://evil.test/", "https://gw.mongodb.com.evil.test/", "http://gw.mongodb.com/", "https://user@ gw.mongodb.com/"])
 def test_grove_credential_cannot_target_arbitrary_hosts(url):
     with pytest.raises(ValueError):
         LLMGateway(Settings(_env_file=None, grove_api_key="test", grove_anthropic_base_url=url))
@@ -70,7 +70,7 @@ async def test_fallback_records_each_attempt_without_exposing_prompts():
 
 async def test_openai_adapter_uses_explicit_endpoint_and_normalizes_cached_tokens(monkeypatch):
     seen = []
-    url = "https://grove-gateway-prod.azure-api.net/test/chat/completions"
+    url = "https://gw.mongodb.com/test/chat/completions"
     def handler(request):
         seen.append(request)
         return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": "ok"}}],
@@ -81,7 +81,7 @@ async def test_openai_adapter_uses_explicit_endpoint_and_normalizes_cached_token
     text, counts, known = await gateway._request("model-test", "s", "d", "u", 20)
     assert text == "ok" and known
     assert counts["input_tokens"] == 20 and counts["cache_read_tokens"] == 80
-    assert str(seen[0].url) == url and seen[0].headers["api-key"] == "test-key"
+    assert str(seen[0].url) == url and seen[0].headers["authorization"] == "Bearer test-key"
 
 
 def test_replayed_agent_event_is_not_a_generation(monkeypatch):

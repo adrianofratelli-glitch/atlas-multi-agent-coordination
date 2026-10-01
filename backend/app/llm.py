@@ -56,7 +56,7 @@ _circuits: dict[str, _CircuitBreaker] = {}
 def _validate_grove_url(url: str) -> str:
     from urllib.parse import urlsplit
     parsed = urlsplit(url)
-    if (parsed.scheme != "https" or parsed.hostname != "grove-gateway-prod.azure-api.net"
+    if (parsed.scheme != "https" or not (parsed.hostname or "").endswith(".mongodb.com")
             or parsed.port not in (None, 443) or parsed.username or parsed.password
             or parsed.query or parsed.fragment or any(ord(c) <= 32 for c in url)):
         raise ValueError("Grove requer HTTPS no host aprovado, sem credenciais ou query na URL")
@@ -71,7 +71,7 @@ class LLMGateway:
         self.timeout = min(float(settings.turn_deadline_seconds), 60.0)
         base = settings.grove_anthropic_base_url or settings.anthropic_base_url
         self.grove = bool(settings.grove_anthropic_base_url or (
-            base and "grove-gateway-prod.azure-api.net" in base))
+            base and base.split("/")[2:3] and base.split("/")[2].endswith(".mongodb.com")))
         if self.grove:
             _validate_grove_url(base)
         elif base and base.rstrip("/") not in ("https://api.anthropic.com", "https://api.anthropic.com/v1"):
@@ -82,9 +82,9 @@ class LLMGateway:
             raise ValueError("Configure GROVE_CHAT_COMPLETIONS_URL para os modelos OpenAI-compatible")
         key = (settings.grove_api_key or settings.anthropic_api_key) if self.grove else settings.anthropic_api_key
         self.anthropic_client = anthropic.AsyncAnthropic(
-            api_key="unused-grove" if self.grove else key,
+            api_key=key,
             base_url=base or None,
-            default_headers={"api-key": key} if self.grove else {},
+            default_headers={"Authorization": f"Bearer {key}"} if self.grove else {},
             http_client=anthropic.DefaultAsyncHttpxClient(follow_redirects=False),
             timeout=self.timeout, max_retries=0,
         ) if key and not settings.demo_mode else None
@@ -103,7 +103,7 @@ class LLMGateway:
             async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
                 response = await client.post(
                     self.settings.grove_chat_completions_url,
-                    headers={"api-key": self.settings.grove_api_key},
+                    headers={"Authorization": f"Bearer {self.settings.grove_api_key}"},
                     json={"model": model, "max_completion_tokens": max_tokens,
                           "messages": [{"role": "system", "content": system_static + "\n\n" + dynamic_context},
                                        {"role": "user", "content": message}]},
