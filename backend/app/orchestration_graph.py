@@ -186,7 +186,8 @@ async def n_guardrail(state: TurnState, config) -> dict:
     timeline.append(TimelineEvent(category="guardrail", title=guardrail_title, collection="guardrail_denylist",
                                    op="read", filter={"area": state["customer"]["area"]},
                                    result={"blocked": guardrail.blocked, "score": guardrail.score,
-                                           "reason": guardrail.reason, "uncertain": guardrail.uncertain}))
+                                           "reason": guardrail.reason, "uncertain": guardrail.uncertain,
+                                           **({"scored_clause": guardrail.clause} if guardrail.clause else {})}))
     return {"timeline": timeline, "budget": budget, "_guardrail_blocked": guardrail.blocked,
             "_own_pii": looks_like_own_pii(state["masked"])}
 

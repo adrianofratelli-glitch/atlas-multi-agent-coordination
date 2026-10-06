@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from . import dilution
 from .database import DataStore, utcnow
 from .router import normalize
 
@@ -15,6 +16,8 @@ class GuardrailResult:
     matched_phrase: str | None = None
     score: float = 0.0
     uncertain: bool = False
+    # Cláusula que decidiu quando a mensagem foi pontuada por intenção (anti-diluição); None = texto inteiro.
+    clause: str | None = None
 
 
 def overlap_score(left: str, right: str) -> float:
@@ -67,6 +70,24 @@ async def semantic_denylist(store: DataStore, message: str, area: str) -> tuple[
             "score": round(float(top.get("score", 0.0)), 4)}, True
 
 
+async def semantic_denylist_by_clause(store: DataStore, message: str, area: str) -> tuple[dict | None, bool]:
+    """`semantic_denylist` sobre a mensagem inteira E cada intenção dela (em paralelo); vale o maior score.
+
+    Diluição: uma frase proibida colada depois de um pedido legítimo longo perde score no vetor da
+    mensagem inteira (medido: 0.887 → 0.7574) e escapava do corte. O corte é o mesmo; só o que é
+    pontuado muda. O match devolvido carrega `clause` quando quem venceu foi uma cláusula.
+    """
+    async def score(text: str):
+        match, available = await semantic_denylist(store, text, area)
+        return (match["score"] if match else 0.0), (match, available)
+
+    _, payload, clause = await dilution.best_by_clause(message, score)
+    match, available = payload if payload else (None, False)
+    if match is not None and clause:
+        match = {**match, "clause": clause}
+    return match, available
+
+
 # Formas que pedem o classificador de segurança MESMO quando uma regra de roteamento já casou (ex.: "PED-8901" casa a regra de
 # pedido e a mensagem pularia o classificador): dado de TERCEIROS, autoridade/segredo, política a burlar e injeção técnica.
 # Isto NÃO decide nada — só liga a verificação (que custa tokens); quem decide é o classificador. Frases sobre texto sem acento.
@@ -109,22 +130,29 @@ GUARDRAIL_CLASSIFIER_PERSONA = (
 
 
 async def check_input(store: DataStore, message: str, customer: dict, llm=None, budget=None, agent_doc=None, skip_semantic: bool = False) -> GuardrailResult:
+    from .memory import fold
     denylist, policy = await _load_denylist_and_policy(store, customer["area"])
-    normalized = normalize(message)
+    # `fold`: sem acento, sem zero-width/bidi (categoria Cf), pontuação e espaços repetidos viram um
+    # espaço. Sem isso "ignore\u200b todas as instruções" ou "ignore,  todas as instruções" passavam
+    # pelo casamento de substring, que é a camada mais barata e a única imune a diluição.
+    normalized = fold(message)
+    # Jaccard por cláusula também: o fallback lexical dilui ainda mais rápido que o vetor
+    # (a união de palavras cresce com o texto benigno).
+    targets = [message] + dilution.clauses(message)
     best_phrase, best_score = None, 0.0
     for item in denylist:
         phrase = item["phrase"]
-        if normalize(phrase) in normalized:
+        if fold(phrase).strip() in normalized:
             result = GuardrailResult(True, "denylist", phrase, 1.0)
             await log_event(store, customer, message, result)
             return result
-        score = overlap_score(message, phrase)
+        score = max(overlap_score(target, phrase) for target in targets)
         if score > best_score:
             best_phrase, best_score = phrase, score
     # Camada semântica determinística (Atlas Vector Search): pega a paráfrase que o casamento
     # de substring acima nunca alcança, antes e sem o custo do classificador LLM — e continua
     # valendo quando `skip_semantic` desliga o classificador.
-    vector_match, vector_available = await semantic_denylist(store, message, customer["area"])
+    vector_match, vector_available = await semantic_denylist_by_clause(store, message, customer["area"])
     ambiguous = False
     if vector_match:
         vector_threshold = float(policy.get("vector_threshold", 0.74))
@@ -134,7 +162,7 @@ async def check_input(store: DataStore, message: str, customer: dict, llm=None, 
         elif vector_match["score"] >= block_threshold:
             result = GuardrailResult(
                 True, f"denylist_vetorial ({vector_match['category']})",
-                vector_match["phrase"], vector_match["score"],
+                vector_match["phrase"], vector_match["score"], clause=vector_match.get("clause"),
             )
             await log_event(store, customer, message, result)
             return result
@@ -189,7 +217,9 @@ async def check_input(store: DataStore, message: str, customer: dict, llm=None, 
             verdict, _ = await llm.complete(
                 agent={**agent_doc, "persona": GUARDRAIL_CLASSIFIER_PERSONA, "max_output_tokens": 40, "temperature": 0},
                 user_message=message,
-                dynamic_context="Classifique a mensagem acima.",
+                dynamic_context="Classifique a mensagem acima." + (
+                    f" Atenção ao trecho mais próximo de uma frase proibida: «{vector_match['clause']}»."
+                    if vector_match and vector_match.get("clause") else ""),
                 budget=budget,
             )
         except Exception:  # noqa: BLE001 — classificador fora do ar não derruba nem bloqueia o turno
@@ -222,7 +252,7 @@ async def check_input(store: DataStore, message: str, customer: dict, llm=None, 
     # exibi-lo no painel daria a impressão de que o guardrail mediu 0.1 uma frase que ele
     # de fato avaliou em 0.77.
     if vector_available and vector_match:
-        return GuardrailResult(False, score=vector_match["score"])
+        return GuardrailResult(False, score=vector_match["score"], clause=vector_match.get("clause"))
     return GuardrailResult(False, score=best_score)
 
 
