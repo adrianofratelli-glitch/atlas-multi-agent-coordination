@@ -4,7 +4,7 @@
 de uma ferramenta que já exporta `ANTHROPIC_BASE_URL` (ex.: um terminal configurado para o
 gateway) via a suíte trocar de rota sem perceber: o `LLMGateway` de um teste que deveria usar só
 a rota Chat Completions passa a montar também o cliente Anthropic. Os testes offline não podem
-depender disso; os testes LIVE (`LIVE=1`) usam o ambiente real de propósito e ficam de fora.
+depender disso (nem falar com o Langfuse do `.env`); os testes LIVE (`LIVE=1`) usam o ambiente real de propósito e ficam de fora.
 """
 
 import os
@@ -20,4 +20,7 @@ def _offline_env_isolation(monkeypatch):
     if os.getenv("LIVE") != "1":
         for name in _LEAKY_ENV:
             monkeypatch.delenv(name, raising=False)
+        # Vazio no ambiente vence o `.env`: a suíte offline não abre conexão com o Langfuse.
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
     yield

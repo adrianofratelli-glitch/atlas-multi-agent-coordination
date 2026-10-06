@@ -258,7 +258,7 @@ async def check_input(store: DataStore, message: str, customer: dict, llm=None, 
 
 # Marcadores que a máscara de PII deixa no texto. Frase feita só disso não é ataque:
 # é cliente colando o próprio documento — comportamento ingênuo, não malicioso.
-_PII_PLACEHOLDERS = ("[cpf]", "[cartao]", "[cartão]", "[email]", "[telefone]")
+_PII_PLACEHOLDERS = ("[cpf]", "[cnpj]", "[cartao]", "[cartão]", "[email]", "[telefone]")
 
 
 def _is_pii_only(phrase: str) -> bool:
@@ -271,7 +271,7 @@ def _is_pii_only(phrase: str) -> bool:
     for tag in _PII_PLACEHOLDERS:
         resto = resto.replace(tag, " ")
     neutro = {"meu", "minha", "e", "o", "a", "de", "do", "da", "eh", "sou", "aqui",
-              "esta", "esse", "este", "cpf", "cartao", "email", "telefone", "numero"}
+              "esta", "esse", "este", "cpf", "cnpj", "cartao", "email", "telefone", "numero"}
     restantes = [w for w in resto.split() if w not in neutro]
     return len(restantes) <= 2
 

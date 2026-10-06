@@ -65,16 +65,24 @@ def secrets_equal(left: str, right: str) -> bool:
     return hmac.compare_digest(left.encode(), right.encode())
 
 
+# Máscara própria, e não `guardrails.mask_pii` do pacote comum, por dois motivos medidos
+# (2026-10-06): o do pacote não mascara cartão sem Presidio, e o formato `[LABEL]` é contrato de
+# `guardrails._is_pii_only` (frase só de PII não envenena o denylist). Ordem importa: CNPJ antes de
+# CPF; telefone não pode começar/terminar colado em outro grupo de dígitos (senão um cartão
+# "4111 1111 1111 1111" virava dois [TELEFONE]).
 PII_PATTERNS = [
     (re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b"), "[EMAIL]"),
-    (re.compile(r"(?<!\d)(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?9?\d{4}[-\s]?\d{4}(?!\d)"), "[TELEFONE]"),
-    (re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)"), "[CARTAO]"),
+    (re.compile(r"(?<!\d)\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}(?!\d)"), "[CNPJ]"),
     (re.compile(r"(?<!\d)\d{3}\.\d{3}\.\d{3}-\d{2}(?!\d)"), "[CPF]"),
+    (re.compile(r"(?<!\d)(?<!\d )(?<!\d-)(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?9?\d{4}[-\s]?\d{4}(?![ -]?\d)"), "[TELEFONE]"),
+    (re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)"), "[CARTAO]"),
 ]
+# Zero-width/bidi (categoria Unicode Cf) quebravam o casamento: "529.\u200b982.247-25" passava inteiro.
+_FORMAT_CHARS = re.compile(r"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
 
 
 def mask_pii(text: str) -> str:
-    masked = text
+    masked = _FORMAT_CHARS.sub("", text)
     for pattern, replacement in PII_PATTERNS:
         masked = pattern.sub(replacement, masked)
     return masked
