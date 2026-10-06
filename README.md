@@ -43,17 +43,22 @@ The UI is in Brazilian Portuguese (used in customer sessions); documentation and
 
 ## Stack
 
-Python 3.12 · FastAPI · React + Vite · Anthropic (Haiku for routing, Sonnet for reasoning) · MongoDB Atlas (Vector Search with `voyage-4` auto-embedding, hybrid RRF, Change Streams, TTL, schema validation).
+Python 3.12 · FastAPI · React + Vite · Claude models through an AI gateway (model per agent in `agent_registry`) · MongoDB Atlas (Vector Search with `voyage-4` auto-embedding, hybrid RRF, Change Streams, TTL, schema validation).
 
 ## Run it
 
 ```bash
-cp .env.example .env
+cp .env.example .env            # fill MONGODB_URI and the LLM gateway variables
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r backend/requirements.txt
-python backend/seed.py
+(cd frontend && npm ci)
+ALLOW_DEMO_DB_WRITE=1 python backend/scripts/reset_demo.py   # full reset: data, probes, Search/Vector indexes (waits for READY)
 ./start.sh                      # backend :8031 + frontend :5191
 ```
+
+`backend/scripts/reset_demo.py` is the single, idempotent reset: it runs `seed.py`, the embedding-classifier probes, wipes what rehearsals wrote (support tickets, redemptions, conversations, learned denylist phrases, per-customer demo memory, orphan LangGraph checkpoints) and waits for the Search/Vector indexes. It keeps the measured configuration (thresholds, classifier configs) and observability (`agent_traces`, `agent_handoffs`). Both it and `seed.py` **refuse the demo database** unless `ALLOW_DEMO_DB_WRITE=1` is passed; pointing `MONGODB_DB`/`MONGODB_BRAIN_DB` at `*_test` databases needs no flag. On a brand-new cluster run `python backend/calibrate_thresholds.py --apply` once after the indexes are READY.
+
+Optional helper package: inside the author's workspace the shared `pov-shared` package (`uv pip install -e ../_shared`) supplies the tracing/edge-guardrail helpers and the clause splitter used by the anti-dilution guardrail. It is not required: without it the guardrail uses an equivalent local splitter and the optional features are no-ops.
 
 The launcher uses a no-reload backend and an optimized frontend build by default. For reload/HMR development run `POV_DEV=1 ./start.sh`; the build is only redone when sources, lockfile, or configuration change.
 
@@ -67,7 +72,8 @@ The demo writes for real (facts, episodes, customer cache). The **"Reset demo me
 
 ```bash
 cd backend
-pytest -q                       # unit tests (408, no network)
+pytest -q                       # offline unit + adversarial tests (no network)
+python tests/adversarial/hostile_http.py <url> [--live]    # hostile inputs against a running server
 python tests/smoke.py <url>     # black-box
 python eval.py <url>            # golden dataset, results in eval_runs
 
@@ -75,6 +81,7 @@ python eval.py <url>            # golden dataset, results in eval_runs
 LIVE=1 pytest tests/test_live.py -q            # ~2 min, essential contracts
 LIVE=1 pytest tests/test_live_random.py -q     # ~4 min, random and out-of-scope questions
 LIVE=1 pytest tests/test_live_scenarios.py -q  # ~10 min, full journey of the 4 customers
+LIVE=1 pytest tests/adversarial -q             # adds real double-click races on the isolated *_test database
 python eval_situations.py                      # ~7 min, 287 LLM-generated situations against the real agent (dev vs holdout)
 ```
 

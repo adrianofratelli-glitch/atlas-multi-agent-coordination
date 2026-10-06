@@ -38,7 +38,7 @@ Componentes: `ChatPanel` (`App.jsx:70-120`), `MongoCacheSavings` (`App.jsx:18-68
 
 A ordem importa (o que um chip escreve o seguinte usa), por isso eles ficam **fora** do golden eval. A reformulação do curto prazo depende do índice vetorial, que o Atlas atualiza de forma assíncrona: se o 2º clique vier em segundos e errar, clicar de novo acerta.
 
-Um clique em **"Nova conversa"** zera `conversation_id`, mensagens, timeline e métricas locais. **"Reiniciar memória da demo"** (`POST /api/demo/reset`) vai além: desfaz o que a demo gravou NESTE cliente (fatos extraídos, episódios, curto prazo, cache do cliente) e reativa o que ela substituiu — o roteiro inteiro pode ser repetido sem a segunda rodada parecer que "não aconteceu nada" por deduplicação. Não toca no cache global aquecido nem em nenhum outro cliente.
+Um clique em **"Nova conversa"** zera `conversation_id`, mensagens, timeline e métricas locais. **"Reiniciar memória da demo"** (`POST /api/demo/reset`) vai além: desfaz o que a demo gravou NESTE cliente (fatos extraídos, episódios, curto prazo, cache do cliente) e reativa o que ela substituiu — o roteiro inteiro pode ser repetido sem a segunda rodada parecer que "não aconteceu nada" por deduplicação. Não toca no cache global aquecido nem em nenhum outro cliente. Fica liberado no banco da demo de propósito (é o botão usado ao vivo, de escopo estreito) e tem limite de requisições; o reset completo do ambiente é `backend/scripts/reset_demo.py`.
 
 **Retomada de sessão**: ao trocar de identidade (ou no boot), `GET /api/conversations/latest` traz a última conversa daquele cliente (se houver, dentro da janela de 24h) e repopula mensagens + timeline do último turno — para não parecer que nada aconteceu numa sessão retomada.
 
