@@ -450,8 +450,23 @@ async def run_loyalty_agent(store: DataStore, message: str, customer: dict, llm=
         redemption = {"redemption_id": f"RDM-{customer['customer_key'].upper()}-{int(started)}", "customer_key": customer["customer_key"], "reward": label, "points_spent": cost, "status": "confirmado", "at": utcnow()}
         # Três escritas, uma transação: débito dos pontos, comprovante e decisão. É a mais
         # crítica das quatro — um débito sem comprovante é saldo que sumiu sem explicação.
+        #
+        # Duplo clique REAL (medido no Atlas, banco *_test): a checagem de repetição acima roda fora
+        # da transação, então três requisições em voo liam "nenhum resgate recente" juntas e brigavam
+        # pelo mesmo `loyalty_accounts` até estourar o retry de WriteConflict (HTTP 500). Por isso a
+        # checagem se repete DENTRO da transação: o WriteConflict serializa os concorrentes, e quem
+        # repete enxerga o resgate já confirmado e devolve o mesmo comprovante sem debitar. O débito
+        # ainda exige saldo no próprio filtro (`points >= cost`), então nunca fica negativo.
         async def _write(tx):
-            await store.update_one("loyalty_accounts", query, {"$inc": {"points": -cost}}, session=tx)
+            repeated = await store.find_one("redemptions", {
+                "customer_key": customer["customer_key"], "reward": label, "status": "confirmado",
+                "at": {"$gte": recent_cutoff}}, session=tx)
+            if repeated:
+                return repeated
+            debited = await store.update_one("loyalty_accounts", {**query, "points": {"$gte": cost}},
+                                             {"$inc": {"points": -cost}}, session=tx)
+            if not debited:
+                return "insufficient"
             await store.insert_one("redemptions", redemption, session=tx)
             await record_decision(store, build_decision_doc(
                 action="loyalty_redemption", subject_id=redemption["redemption_id"],
@@ -460,7 +475,19 @@ async def run_loyalty_agent(store: DataStore, message: str, customer: dict, llm=
                 reasoning=f"Saldo de {clean['points']} pontos cobre o custo de {cost} de '{label}'.",
                 payload={"reward": label, "points_spent": cost, "balance_after": clean["points"] - cost},
             ), session=tx)
-        await run_in_transaction_with_retry(store, _write)
+            return None
+        outcome = await run_in_transaction_with_retry(store, _write, max_attempts=6)
+        if isinstance(outcome, dict):
+            response = (
+                f"Resgate confirmado: **{label}**, {outcome['points_spent']} pontos debitados "
+                f"(pedido de resgate idêntico já processado há poucos segundos — não debitei de novo)."
+            )
+            event = TimelineEvent(category="agent", title="Resgate de fidelidade (idempotência: repetição concorrente ignorada)", agent="loyalty_agent", collection="redemptions", op="read", filter=query, result=public_document(outcome), duration_ms=(perf_counter() - started) * 1000)
+            return AgentResult(response, event)
+        if outcome == "insufficient":
+            response = f"O saldo mudou durante o pedido e não cobre mais {label} ({cost} pontos); nada foi debitado."
+            event = TimelineEvent(category="agent", title="Resgate de fidelidade não efetivado (saldo mudou)", agent="loyalty_agent", collection="loyalty_accounts", op="read", filter=query, result={}, duration_ms=(perf_counter() - started) * 1000)
+            return AgentResult(response, event)
         response = f"Resgate confirmado: **{label}**, {cost} pontos debitados. Saldo restante: {clean['points'] - cost} pontos."
         event = TimelineEvent(category="agent", title="Resgate de fidelidade confirmado", agent="loyalty_agent", collection="redemptions", op="write", filter=query, result=redemption, duration_ms=(perf_counter() - started) * 1000)
         return AgentResult(response, event)
@@ -761,19 +788,48 @@ async def run_support_agent(store: DataStore, message: str, customer: dict, llm=
     if wants_escalation:
         # KB sem evidência confiável (ou pedido explícito de escalonar): abre chamado real em vez de deixar
         # o cliente sem próximo passo — mais uma ação de escrita além do write único do order_agent.
-        ticket = {"ticket_id": f"TCK-{customer['customer_key'].upper()}-{int(started * 1000) % 100000}", "customer_key": customer["customer_key"], "area": customer["area"], "subject": message[:200], "status": "aberto", "created_at": utcnow()}
+        # Um chamado humano aberto por conversa. O id era derivado do relógio, então duplo clique,
+        # retry de rede ou F5 abriam um chamado por requisição (medido no Atlas: 3 cliques, 3
+        # chamados). Agora o id é derivado da conversa e o `_id` do documento É esse id: duas
+        # transações concorrentes colidem no mesmo `_id` (WriteConflict → retry), e quem repete
+        # encontra o chamado já aberto e o devolve em vez de criar outro.
+        import hashlib
+        conversation_id = (context or {}).get("conversation_id", "")
+        suffix = (hashlib.sha256(f"{customer['customer_key']}:{conversation_id}".encode()).hexdigest()[:8].upper()
+                  if conversation_id else str(int(started * 1000) % 100000))
+        ticket_id = f"TCK-{customer['customer_key'].upper()}-{suffix}"
+        ticket = {"_id": ticket_id, "ticket_id": ticket_id, "customer_key": customer["customer_key"], "area": customer["area"],
+                  "conversation_id": conversation_id, "subject": message[:200], "status": "aberto", "created_at": utcnow()}
+
         async def _write(tx):
+            existing = await store.find_one("support_tickets", {"ticket_id": ticket_id, "customer_key": customer["customer_key"]}, session=tx)
+            if existing:
+                return existing
             await store.insert_one("support_tickets", ticket, session=tx)
             await record_decision(store, build_decision_doc(
                 action="support_ticket_open", subject_id=ticket["ticket_id"],
                 customer_key=customer["customer_key"], agent="support_agent",
-                conversation_id=(context or {}).get("conversation_id", ""),
+                conversation_id=conversation_id,
                 reasoning="Cliente pediu explicitamente atendimento humano.",
                 payload={"subject": ticket["subject"], "area": ticket["area"]},
             ), severity="warning", session=tx)
-        await run_in_transaction_with_retry(store, _write)
+            return None
+        try:
+            existing = await run_in_transaction_with_retry(store, _write, max_attempts=6)
+        except Exception as exc:  # noqa: BLE001 — só a colisão de _id vira "já aberto"; o resto sobe
+            if getattr(exc, "code", None) != 11000:
+                raise
+            existing = await store.find_one("support_tickets", {"ticket_id": ticket_id, "customer_key": customer["customer_key"]})
+            if not existing:
+                raise
+        if existing:
+            final_response += f"\n\nO chamado **{ticket_id}** já está aberto para esta conversa — nosso time entra em contato em até 24h."
+            extra_events.append(TimelineEvent(category="agent", title="Chamado de suporte já aberto (idempotência)", agent="support_agent", collection="support_tickets", op="read", result=public_document(existing)))
+            if wants_recommendation:
+                return AgentResult(final_response, event, "product_agent", "cliente pediu alternativa de produto após o diagnóstico", extra_events=extra_events)
+            return AgentResult(final_response, event, extra_events=extra_events)
         final_response += f"\n\nAbri o chamado **{ticket['ticket_id']}** para acompanhamento humano — nosso time entra em contato em até 24h."
-        extra_events.append(TimelineEvent(category="agent", title="Chamado de suporte aberto", agent="support_agent", collection="support_tickets", op="write", result=ticket))
+        extra_events.append(TimelineEvent(category="agent", title="Chamado de suporte aberto", agent="support_agent", collection="support_tickets", op="write", result=public_document(ticket)))
 
     if wants_recommendation:
         return AgentResult(final_response, event, "product_agent", "cliente pediu alternativa de produto após o diagnóstico", extra_events=extra_events)
