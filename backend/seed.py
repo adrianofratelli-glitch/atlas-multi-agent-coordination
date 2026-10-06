@@ -81,8 +81,11 @@ async def seed(store: DataStore, *, create_indexes: bool = True) -> list[str]:
             "demo_scenarios", {"scenario_id": scenario["scenario_id"]}, scenario, brain=True, upsert=True
         )
     for policy in GUARDRAIL_POLICIES:
-        await store.replace_one(
-            "guardrail_policies", {"area": policy["area"]}, policy, brain=True, upsert=True
+        # $set, não replace: `vector_block_threshold` (e os demais cortes) são MEDIDOS por
+        # calibrate_thresholds.py e vivem só no cluster. O replace apagava o corte medido
+        # (0.8814 na demo) e o bloqueio direto voltava ao default 0.92 sem ninguém perceber.
+        await store.update_one(
+            "guardrail_policies", {"area": policy["area"]}, {"$set": policy}, brain=True, upsert=True
         )
     await store.replace_one(
         "model_config",
@@ -221,8 +224,26 @@ async def create_search_indexes(store: DataStore) -> list[str]:
     return messages
 
 
+def refuse_demo_database(settings) -> None:
+    """O seed redefine o mundo (pedidos, saldos, decisões, cache): no banco da demo só com intenção explícita."""
+    import os
+    if settings.use_memory_store:
+        return
+    allowed = os.getenv("ALLOW_DEMO_DB_WRITE", "").strip().lower() in {"1", "true", "yes", "on"}
+    targets = (settings.mongodb_db, settings.mongodb_brain_db)
+    if all(name.endswith("_test") for name in targets) or allowed:
+        return
+    raise SystemExit(
+        f"[seed] RECUSADO: o destino é o banco da demo ({targets[0]}/{targets[1]}) e o seed apaga cache, "
+        "decisões e casos pausados.\n       Para a demo, use o reset completo: "
+        "ALLOW_DEMO_DB_WRITE=1 python backend/scripts/reset_demo.py\n"
+        "       (ou ALLOW_DEMO_DB_WRITE=1 python backend/seed.py para só o seed).")
+
+
 async def main() -> None:
-    store = DataStore(get_settings())
+    settings = get_settings()
+    refuse_demo_database(settings)
+    store = DataStore(settings)
     await store.connect()
     try:
         for message in await seed(store):

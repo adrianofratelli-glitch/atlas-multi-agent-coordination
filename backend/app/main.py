@@ -194,10 +194,18 @@ async def warmup(request: Request):
 
 
 @app.post("/api/demo/reset")
-async def demo_reset(customer: Annotated[dict, Depends(current_customer)], store: DataStore = Depends(get_store)):
-    """Desfaz o que a demo gravou NESTE cliente (customer_key do JWT, nunca do corpo) para repetir o roteiro."""
+async def demo_reset(request: Request, customer: Annotated[dict, Depends(current_customer)], store: DataStore = Depends(get_store)):
+    """Desfaz o que a demo gravou NESTE cliente (customer_key do JWT, nunca do corpo) para repetir o roteiro.
+
+    Fica liberado no banco da demo de propósito: é o botão "Reiniciar memória da demo" usado AO VIVO, e o
+    escopo já é estreito (só o que o extrator/cache gravou para o cliente do token; nunca dado de negócio,
+    cache global ou outro cliente). Fora da demo some junto com a emissão de token de demonstração
+    (`DEMO_TOKEN_ISSUANCE_ENABLED=0`, obrigatório em produção). O reset COMPLETO é scripts/reset_demo.py.
+    """
     if not settings.demo_token_issuance_enabled:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "reset da demo desabilitado")
+    if not limiter.allow(request_identity_key(request, f"reset:{customer['customer_key']}")):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "limite de requisições excedido")
     return await reset_customer_memory(store, customer["customer_key"])
 
 
