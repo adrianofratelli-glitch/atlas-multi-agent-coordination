@@ -138,7 +138,7 @@ class OrchestrationService:
 
     async def run_turn(self, message: str, customer: dict, conversation_id: str | None) -> ChatResponse:
         """Orquestração do turno completo — implementada como StateGraph do LangGraph
-        em `orchestration_graph.py` (checkpoint nativo, `thread_id=conversation_id`).
+        em `orchestration_graph.py` (checkpoint nativo, `thread_id=<customer_key>:<conversation_id>`).
         Este método só delega; import local evita ciclo (orchestration_graph importa
         este módulo para reaproveitar constantes/funções compartilhadas)."""
         from . import orchestration_graph
