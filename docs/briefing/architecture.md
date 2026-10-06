@@ -8,7 +8,7 @@ PoV de atendimento ao cliente multiagente onde o **MongoDB Atlas é tanto o data
 
 8 agentes reais registrados em `agent_registry`: `orchestrator`, `order_agent`, `product_agent`, `support_agent`, `billing_agent`, `warranty_agent`, `loyalty_agent`, `logistics_agent`.
 
-**Orquestração**: o turno é um `StateGraph` do LangGraph (`backend/app/orchestration_graph.py`, migrado em 2026-09-29) com `MongoDBSaver` como checkpointer (`langgraph_checkpoints`, `thread_id = conversation_id`). Detalhes em `agent-behavior.md`.
+**Orquestração**: o turno é um `StateGraph` do LangGraph (`backend/app/orchestration_graph.py`, migrado em 2026-09-29) com `MongoDBSaver` como checkpointer (`langgraph_checkpoints`, `thread_id = <customer_key>:<conversation_id>`, TTL 24h). Detalhes em `agent-behavior.md`.
 
 ## Stack
 
@@ -36,6 +36,8 @@ PoV de atendimento ao cliente multiagente onde o **MongoDB Atlas é tanto o data
 | `backend/app/turn_classifier.py` | Classificador vetorial "este turno depende da memória deste cliente?" (`<brain>.turn_probes`) |
 | `backend/app/warmup.py` | Aquecimento automático do cache semântico (no start e quando a UI abre) |
 | `backend/app/demo_reset.py` | Desfaz o que a demo gravou num cliente e reativa o que ela substituiu |
+| `backend/scripts/reset_demo.py` | Reset completo da demo num comando (seed + probes + escritas de ensaio + checkpoints órfãos + espera dos índices); recusa o banco da demo sem `ALLOW_DEMO_DB_WRITE=1` |
+| `backend/app/dilution.py` | Anti-diluição do guardrail de entrada: pontua mensagem inteira e cláusulas, vale o maior score |
 | `backend/app/retrieval.py` | Pipelines de busca híbrida (`kb_articles`) — vetor, lexical, `$rankFusion` |
 | `backend/app/guardrails.py` | 3 camadas de guardrail: denylist estático, denylist vetorial, classificador LLM |
 | `backend/app/database.py` | `DataStore` — abstração Atlas real vs. in-memory; índices e validators |

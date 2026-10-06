@@ -76,12 +76,18 @@ async def test_openai_adapter_uses_explicit_endpoint_and_normalizes_cached_token
         return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": "ok"}}],
             "usage": {"prompt_tokens": 100, "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 80}}})
     client_class = httpx.AsyncClient
-    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: client_class(transport=httpx.MockTransport(handler), **kw))
+
+    class _MockedAsyncClient(client_class):  # subclasse, não lambda: o SDK faz isinstance(..., httpx.AsyncClient)
+        def __init__(self, **kw):
+            super().__init__(transport=httpx.MockTransport(handler), **kw)
+
     gateway = LLMGateway(Settings(_env_file=None, grove_api_key="test-key", grove_chat_completions_url=url, grove_openai_models=["model-test"]))
+    monkeypatch.setattr(httpx, "AsyncClient", _MockedAsyncClient)  # depois do SDK: ele valida isinstance no construtor
     text, counts, known = await gateway._request("model-test", "s", "d", "u", 20)
     assert text == "ok" and known
     assert counts["input_tokens"] == 20 and counts["cache_read_tokens"] == 80
     assert str(seen[0].url) == url and seen[0].headers["authorization"] == "Bearer test-key"
+    assert seen[0].headers["x-api-key"] == "test-key"  # o gateway valida x-api-key antes do Bearer
 
 
 def test_replayed_agent_event_is_not_a_generation(monkeypatch):

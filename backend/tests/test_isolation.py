@@ -45,3 +45,12 @@ def test_explicit_escape_hatch_allows_the_demo_database(demo, monkeypatch):
 def test_env_override_wins_over_the_suffix(demo, monkeypatch):
     monkeypatch.setenv("MONGODB_TEST_DB", "outro_banco")
     assert isolation.test_database_names(demo) == ("outro_banco", "cerebro_test")
+
+
+def test_test_database_from_env_is_not_mistaken_for_the_demo(monkeypatch):
+    """eval.py instrui subir servidor e eval com MONGODB_DB=..._test: aí get_settings() já É o teste."""
+    settings = Settings(demo_mode=True, mongodb_uri="", mongodb_db="loja_test", mongodb_brain_db="cerebro_test")
+    monkeypatch.setattr(isolation, "get_settings", lambda: settings)
+    monkeypatch.delenv("ALLOW_DEMO_DB_WRITE", raising=False)
+    assert isolation.guard(settings, what="teste").mongodb_db == "loja_test"
+    assert isolation.test_database_names(settings) == ("loja_test", "cerebro_test")  # sem _test_test

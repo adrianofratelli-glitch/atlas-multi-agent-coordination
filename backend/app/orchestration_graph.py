@@ -4,7 +4,7 @@
 múltiplos `return` antecipados (bloqueado pelo guardrail, fanout, fora de
 escopo, cache hit, cadeia completa de handoff). Isto reorganiza o MESMO
 comportamento em nós de grafo com checkpoint nativo (`MongoDBSaver`,
-`thread_id=conversation_id`), sem tocar a lógica de roteamento, guardrail,
+`thread_id=<customer_key>:<conversation_id>`), sem tocar a lógica de roteamento, guardrail,
 cascata semântica, orçamento ou segurança — que continuam em
 `router.py`/`guardrails.py`/`cascade.py`/`budget.py`, chamadas pelos nós
 exatamente como antes.
@@ -186,7 +186,8 @@ async def n_guardrail(state: TurnState, config) -> dict:
     timeline.append(TimelineEvent(category="guardrail", title=guardrail_title, collection="guardrail_denylist",
                                    op="read", filter={"area": state["customer"]["area"]},
                                    result={"blocked": guardrail.blocked, "score": guardrail.score,
-                                           "reason": guardrail.reason, "uncertain": guardrail.uncertain}))
+                                           "reason": guardrail.reason, "uncertain": guardrail.uncertain,
+                                           **({"scored_clause": guardrail.clause} if guardrail.clause else {})}))
     return {"timeline": timeline, "budget": budget, "_guardrail_blocked": guardrail.blocked,
             "_own_pii": looks_like_own_pii(state["masked"])}
 
@@ -585,6 +586,9 @@ _GRAPH = None
 _CHECKPOINT_CLIENT: SyncMongoClient | None = None
 
 
+CHECKPOINT_TTL_SECONDS = 86400  # mesmo TTL de agent_conversations (database.py)
+
+
 def _build_graph(settings):
     builder = StateGraph(TurnState)
     builder.add_node("ingest", n_ingest)
@@ -628,11 +632,13 @@ def _build_graph(settings):
         serde = JsonPlusSerializer(allowed_msgpack_modules=[
             "app.router", "app.cascade", "app.budget", "app.models",
         ])
+        # TTL igual ao de `agent_conversations` (1 dia): sem ele os checkpoints viviam para sempre
+        # depois que a conversa expirava (medido na demo: 977 checkpoints e 4.498 writes, 0 conversas).
         checkpointer = MongoDBSaver(
             _CHECKPOINT_CLIENT, db_name=settings.mongodb_db,
             checkpoint_collection_name="langgraph_checkpoints",
             writes_collection_name="langgraph_checkpoint_writes",
-            serde=serde,
+            serde=serde, ttl=CHECKPOINT_TTL_SECONDS,
         )
     return builder.compile(checkpointer=checkpointer)
 
@@ -644,6 +650,10 @@ def get_graph(settings):
     return _GRAPH
 
 
+def checkpoint_thread_id(customer: dict, conversation_id: str) -> str:
+    return f"{customer['customer_key']}:{conversation_id}"
+
+
 async def run_turn(service, message: str, customer: dict, conversation_id: str | None) -> ChatResponse:
     requested_conversation_id = conversation_id
     resolved_conversation_id = requested_conversation_id or f"conv-{uuid.uuid4().hex[:12]}"
@@ -653,6 +663,11 @@ async def run_turn(service, message: str, customer: dict, conversation_id: str |
         "conversation_id": resolved_conversation_id,
         "requested_conversation_id": requested_conversation_id,
     }
-    config = {"configurable": {"thread_id": resolved_conversation_id, "service": service}}
+    # thread_id NAMESPACED pelo cliente: com `thread_id=conversation_id` puro, quem enviasse o
+    # conversation_id de OUTRO cliente carregava o checkpoint dele no próprio turno e gravava um
+    # checkpoint novo na thread alheia (o n_ingest troca o id da conversa, mas o checkpointer já
+    # tinha resolvido a thread). Com o prefixo, id alheio cai numa thread vazia do próprio cliente.
+    config = {"configurable": {"thread_id": checkpoint_thread_id(customer, resolved_conversation_id),
+                               "service": service}}
     final_state = await graph.ainvoke(initial, config=config)
     return final_state["output"]

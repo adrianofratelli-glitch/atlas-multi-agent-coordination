@@ -103,7 +103,10 @@ class LLMGateway:
             async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
                 response = await client.post(
                     self.settings.grove_chat_completions_url,
-                    headers={"Authorization": f"Bearer {self.settings.grove_api_key}"},
+                    # Mesmo contrato da rota Anthropic: o gateway valida a chave real em
+                    # x-api-key primeiro; o Bearer sozinho depende de tolerância do gateway.
+                    headers={"Authorization": f"Bearer {self.settings.grove_api_key}",
+                             "x-api-key": self.settings.grove_api_key},
                     json={"model": model, "max_completion_tokens": max_tokens,
                           "messages": [{"role": "system", "content": system_static + "\n\n" + dynamic_context},
                                        {"role": "user", "content": message}]},
@@ -216,7 +219,12 @@ class LLMGateway:
                             status = exc.response.status_code
                         retry = status == 429 or (status is not None and status >= 500) or isinstance(
                             exc, (anthropic.APIConnectionError, httpx.TransportError))
-                        await breaker.record_failure()
+                        # O breaker mede a SAÚDE do provedor (429/5xx/timeout/conexão). Erro de
+                        # configuração (404 de modelo inexistente, 400) é do chamador: contá-lo
+                        # deixaria um agente mal configurado abrir o circuito do endpoint inteiro
+                        # e derrubar os outros sete agentes por 30 s.
+                        if retry:
+                            await breaker.record_failure()
                         # Unknown usage remains reserved conservatively for this failed attempt.
                     finally:
                         record["latency_ms"] = round((monotonic() - started) * 1000, 2)

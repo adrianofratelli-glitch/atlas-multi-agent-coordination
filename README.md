@@ -20,7 +20,7 @@ The UI is in Brazilian Portuguese (used in customer sessions); documentation and
 
 ![Agent registry with model, scope, and a per-agent on/off switch](docs/screenshots/04-agents-registry.png)
 
-**4. Try to break it, including with random questions.** A jailbreak or false-authority prompt hits the denylist first. Anything new goes to a cheap LLM classifier that writes the pattern back into the denylist, so the next attempt is free. The automatic-block cutoff is **measured**, not guessed: the vector does not separate fraud from a legitimate refund ("I never received my order, I want my money back" scores 0.8664 against a fraud phrase). Above the highest measured legitimate score it blocks on its own; in the ambiguous band the classifier decides, so a customer is never blocked by vector proximity alone. And "what's the weather today?" is not an attack: it gets polite guidance with **0 tokens**, no agent and no cache, tagged `🧭 Scope guardrail`. What belongs to the store is decided by a vector search (`scope_probes`) that understands English, slang, and typos, and calls the LLM only in the ambiguous band. Measured on **287 LLM-generated situations** (with a holdout): accuracy **87.3% → 98.6%** on the holdout, 0% of legitimate customers blocked.
+**4. Try to break it, including with random questions.** A jailbreak or false-authority prompt hits the denylist first. Anything new goes to a cheap LLM classifier that writes the pattern back into the denylist, so the next attempt is free. The automatic-block cutoff is **measured**, not guessed: the vector does not separate fraud from a legitimate refund ("I never received my order, I want my money back" scores 0.8664 against a fraud phrase). Above the highest measured legitimate score it blocks on its own; in the ambiguous band the classifier decides, so a customer is never blocked by vector proximity alone. And "what's the weather today?" is not an attack: it gets polite guidance with **0 tokens**, no agent and no cache, tagged `🧭 Scope guardrail`. What belongs to the store is decided by a vector search (`scope_probes`) that understands English, slang, and typos, and calls the LLM only in the ambiguous band. Measured on **287 LLM-generated situations** (with a holdout): accuracy **87.3% → 98.6%** on the holdout, 0% of legitimate customers blocked. Hiding a forbidden request behind a long legitimate one does not work either: the input is scored as a whole **and per clause** (measured on the real index: 0.887 alone, 0.7574 diluted, 0.8867 per clause, same cut-offs), at ~+23 ms p50 for a long message because the clause searches run in parallel.
 
 ![Guardrails panel: blocks, self-feeding denylist, flagged ambiguous cases](docs/screenshots/06-guardrails.png)
 
@@ -43,17 +43,22 @@ The UI is in Brazilian Portuguese (used in customer sessions); documentation and
 
 ## Stack
 
-Python 3.12 · FastAPI · React + Vite · Anthropic (Haiku for routing, Sonnet for reasoning) · MongoDB Atlas (Vector Search with `voyage-4` auto-embedding, hybrid RRF, Change Streams, TTL, schema validation).
+Python 3.12 · FastAPI · React + Vite · Claude models through an AI gateway (model per agent in `agent_registry`) · MongoDB Atlas (Vector Search with `voyage-4` auto-embedding, hybrid RRF, Change Streams, TTL, schema validation).
 
 ## Run it
 
 ```bash
-cp .env.example .env
+cp .env.example .env            # fill MONGODB_URI and the LLM gateway variables
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r backend/requirements.txt
-python backend/seed.py
+(cd frontend && npm ci)
+ALLOW_DEMO_DB_WRITE=1 python backend/scripts/reset_demo.py   # full reset: data, probes, Search/Vector indexes (waits for READY)
 ./start.sh                      # backend :8031 + frontend :5191
 ```
+
+`backend/scripts/reset_demo.py` is the single, idempotent reset: it runs `seed.py`, the embedding-classifier probes, wipes what rehearsals wrote (support tickets, redemptions, conversations, learned denylist phrases, per-customer demo memory, orphan LangGraph checkpoints) and waits for the Search/Vector indexes. It keeps the measured configuration (thresholds, classifier configs) and observability (`agent_traces`, `agent_handoffs`). Both it and `seed.py` **refuse the demo database** unless `ALLOW_DEMO_DB_WRITE=1` is passed; pointing `MONGODB_DB`/`MONGODB_BRAIN_DB` at `*_test` databases needs no flag. On a brand-new cluster run `python backend/calibrate_thresholds.py --apply` once after the indexes are READY.
+
+Optional helper package: inside the author's workspace the shared `pov-shared` package (`uv pip install -e ../_shared`) supplies the tracing/edge-guardrail helpers and the clause splitter used by the anti-dilution guardrail. It is not required: without it the guardrail uses an equivalent local splitter and the optional features are no-ops.
 
 The launcher uses a no-reload backend and an optimized frontend build by default. For reload/HMR development run `POV_DEV=1 ./start.sh`; the build is only redone when sources, lockfile, or configuration change.
 
@@ -67,7 +72,8 @@ The demo writes for real (facts, episodes, customer cache). The **"Reset demo me
 
 ```bash
 cd backend
-pytest -q                       # unit tests (408, no network)
+pytest -q                       # offline unit + adversarial tests (no network)
+python tests/adversarial/hostile_http.py <url> [--live]    # hostile inputs against a running server
 python tests/smoke.py <url>     # black-box
 python eval.py <url>            # golden dataset, results in eval_runs
 
@@ -75,6 +81,7 @@ python eval.py <url>            # golden dataset, results in eval_runs
 LIVE=1 pytest tests/test_live.py -q            # ~2 min, essential contracts
 LIVE=1 pytest tests/test_live_random.py -q     # ~4 min, random and out-of-scope questions
 LIVE=1 pytest tests/test_live_scenarios.py -q  # ~10 min, full journey of the 4 customers
+LIVE=1 pytest tests/adversarial -q             # adds real double-click races on the isolated *_test database
 python eval_situations.py                      # ~7 min, 287 LLM-generated situations against the real agent (dev vs holdout)
 ```
 

@@ -148,7 +148,7 @@ Alternativa descartada: ler N candidatos e cortar com `$match` depois — mais l
 Erro, índice ausente ou limiar não medido ⇒ trata como pessoal (falha fechada). Em `DEMO_MODE` cai numa sobreposição de palavras contra os probes do código.
 
 ### 1.5 `$vectorSearch` — denylist semântico (guardrail)
-**Onde**: `backend/app/guardrails.py:31-61` (`semantic_denylist`).
+**Onde**: `backend/app/guardrails.py` (`semantic_denylist`; chamada por `semantic_denylist_by_clause`, que roda o mesmo pipeline sobre a mensagem inteira e sobre cada cláusula, em paralelo — anti-diluição, ver `agent-behavior.md`).
 
 ```python
 [
