@@ -70,7 +70,6 @@ Cartões executivos, não payload técnico bruto:
 | `Timeline.jsx` | Renderiza a lista cronológica de `TimelineEvent`s do turno |
 | `QueryDetails.jsx` | Detalhe expandido de um evento — filtro Mongo usado, resultado, duração |
 | `ReplacementChain.jsx` | Visualização da cadeia de `$graphLookup` (pedido → reposição → reposição...) |
-| `AiBrainPanel.jsx` | Painel de introspecção do "cérebro" do sistema (registry/routing rules) |
 | `CompliancePage.jsx` | Aba Decisões — decisões, auditoria, revisões pendentes, candidatos de guardrail |
 
 ## Como validar visualmente
