@@ -51,8 +51,10 @@ def allow_demo_write() -> bool:
 
 def test_database_names(settings: Settings | None = None) -> tuple[str, str]:
     base = settings or get_settings()
-    return (os.getenv("MONGODB_TEST_DB") or f"{base.mongodb_db}_test",
-            os.getenv("MONGODB_TEST_BRAIN_DB") or f"{base.mongodb_brain_db}_test")
+    def suffixed(name: str) -> str:  # sem `_test_test` quando a base já é o banco de teste
+        return name if name.endswith("_test") else f"{name}_test"
+    return (os.getenv("MONGODB_TEST_DB") or suffixed(base.mongodb_db),
+            os.getenv("MONGODB_TEST_BRAIN_DB") or suffixed(base.mongodb_brain_db))
 
 
 def test_settings(**overrides) -> Settings:
@@ -65,9 +67,12 @@ def test_settings(**overrides) -> Settings:
 def guard(settings: Settings, *, what: str, hint: str = "") -> Settings:
     """Recusa rodar contra o banco da demo. Retorna as settings quando o destino é seguro."""
     demo = get_settings()
+    # Nome que já termina em `_test` nunca é a demo. Sem essa regra, rodar com
+    # MONGODB_DB=..._test (como o próprio eval.py instrui) fazia get_settings() devolver o banco de
+    # teste como "demo" e a guarda recusava o destino seguro.
     hits = [name for name, value in (("MONGODB_DB", settings.mongodb_db),
                                      ("MONGODB_BRAIN_DB", settings.mongodb_brain_db))
-            if value in (demo.mongodb_db, demo.mongodb_brain_db)]
+            if value in (demo.mongodb_db, demo.mongodb_brain_db) and not value.endswith("_test")]
     if not hits:
         return settings
     if allow_demo_write():
