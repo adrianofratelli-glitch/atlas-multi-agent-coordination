@@ -21,7 +21,7 @@ Definidos como documentos em `multiagent_brain.agent_registry` (seed em `backend
 | agent_key | Papel | Modelo | Tools | Budget (tokens/turno) | Escreve? |
 |---|---|---|---|---|---|
 | `orchestrator` | Classifica intenção e roteia quando a regra determinística não resolve; nunca responde direto ao cliente | claude-haiku-4-5 | `route`, `consolidate` | 2600 | não |
-| `order_agent` | Status, troca, reembolso de pedido do titular autenticado | claude-haiku-4-5 | `read_order`, `update_order_status` | 4000 | **sim** — único agente com escrita restrita a status aprovado |
+| `order_agent` | Status, troca, reembolso de pedido do titular autenticado | claude-sonnet-5-5 | `read_order`, `update_order_status` | 4000 | **sim** — único agente com escrita restrita a status aprovado |
 | `product_agent` | Recomendação via busca vetorial no catálogo | claude-haiku-4-5 | `vector_search_products` | 4500 | não |
 | `support_agent` | Diagnóstico técnico via RAG híbrido na KB | claude-haiku-4-5 | `hybrid_search_kb`, `handoff` | 4500 | **sim** — abre `support_tickets` em escalonamento explícito |
 | `billing_agent` | Fatura, somente leitura | claude-haiku-4-5 | `read_invoice` | 4000 | não |
