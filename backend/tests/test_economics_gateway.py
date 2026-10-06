@@ -81,8 +81,8 @@ async def test_openai_adapter_uses_explicit_endpoint_and_normalizes_cached_token
         def __init__(self, **kw):
             super().__init__(transport=httpx.MockTransport(handler), **kw)
 
-    monkeypatch.setattr(httpx, "AsyncClient", _MockedAsyncClient)
     gateway = LLMGateway(Settings(_env_file=None, grove_api_key="test-key", grove_chat_completions_url=url, grove_openai_models=["model-test"]))
+    monkeypatch.setattr(httpx, "AsyncClient", _MockedAsyncClient)  # depois do SDK: ele valida isinstance no construtor
     text, counts, known = await gateway._request("model-test", "s", "d", "u", 20)
     assert text == "ok" and known
     assert counts["input_tokens"] == 20 and counts["cache_read_tokens"] == 80

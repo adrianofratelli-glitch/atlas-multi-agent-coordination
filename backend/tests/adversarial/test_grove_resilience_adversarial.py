@@ -125,9 +125,9 @@ async def test_chat_completions_route_retries_5xx_and_sends_real_key(monkeypatch
         def __init__(self, **kw):
             super().__init__(transport=httpx.MockTransport(handler), **kw)
 
-    monkeypatch.setattr(httpx, "AsyncClient", Mocked)
     gateway = LLMGateway(Settings(_env_file=None, grove_api_key="real-key", grove_chat_completions_url=CHAT,
                                   grove_openai_models=["gpt-x"]))
+    monkeypatch.setattr(httpx, "AsyncClient", Mocked)  # depois do SDK: ele valida isinstance no construtor
     budget = TurnBudget(5000, {"a": 5000})
     text, _ = await gateway.complete(agent={**AGENT, "model": "gpt-x", "fallback_model": "gpt-x"},
                                      user_message="u", dynamic_context="", budget=budget)
