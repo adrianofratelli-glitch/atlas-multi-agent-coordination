@@ -161,10 +161,10 @@ async def test_empty_dynamic_context_never_sends_an_empty_system_block():
     gateway = LLMGateway(Settings(_env_file=None, anthropic_api_key="test"))
     gateway.anthropic_client = SimpleNamespace(messages=FakeMessages())
     gateway.client = gateway.anthropic_client
-    text, *_ = await gateway._request("claude-haiku-4-5", "persona", "", "oi", 50)
+    text, *_ = await gateway._request("claude-sonnet-5-5", "persona", "", "oi", 50)
     assert text == "ok"
     assert [block["text"] for block in captured["system"]] == ["persona"]
-    await gateway._request("claude-haiku-4-5", "persona", "contexto", "oi", 50)
+    await gateway._request("claude-sonnet-5-5", "persona", "contexto", "oi", 50)
     assert [block["text"] for block in captured["system"]] == ["persona", "contexto"]
 
 
@@ -189,10 +189,10 @@ async def test_temperature_is_sent_only_when_requested_and_dropped_for_models_th
     gateway = LLMGateway(Settings(_env_file=None, anthropic_api_key="test"))
     gateway.anthropic_client = SimpleNamespace(messages=FakeMessages(reject=False))
     gateway.client = gateway.anthropic_client
-    await gateway._request("claude-haiku-4-5", "p", "c", "oi", 50)
+    await gateway._request("claude-sonnet-5-5", "p", "c", "oi", 50)
     assert "temperature" not in calls[-1]                       # padrão: não manda
-    await gateway._request("claude-haiku-4-5", "p", "c", "oi", 50, temperature=0)
+    await gateway._request("claude-sonnet-5-5", "p", "c", "oi", 50, temperature=0)
     assert calls[-1]["temperature"] == 0
     gateway.anthropic_client = SimpleNamespace(messages=FakeMessages(reject=True))
-    text, *_ = await gateway._request("claude-haiku-4-5", "p", "c", "oi", 50, temperature=0)
+    text, *_ = await gateway._request("claude-sonnet-5-5", "p", "c", "oi", 50, temperature=0)
     assert text == "ok" and "temperature" not in calls[-1]      # modelo rejeitou: repete sem o parâmetro

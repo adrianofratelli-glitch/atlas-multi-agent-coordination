@@ -90,7 +90,7 @@ async def seed(store: DataStore, *, create_indexes: bool = True) -> list[str]:
     await store.replace_one(
         "model_config",
         {"key": "default"},
-        {"key": "default", "default_model": "claude-haiku-4-5", "global_turn_tokens": 26000},
+        {"key": "default", "default_model": "claude-sonnet-5-5", "global_turn_tokens": 26000},
         brain=True,
         upsert=True,
     )

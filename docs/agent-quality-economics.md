@@ -5,6 +5,9 @@ O Grove continua sendo o gateway externo; a aplicação escolhe a rota, controla
 orçamento e registra tentativas. Isso não implementa quotas distribuídas ou administração
 central de múltiplas aplicações.
 
+> Desde 06/10/2026 os oito agentes do registry usam `claude-sonnet-5-5` (modelo e fallback).
+> As menções a Claude Haiku abaixo são registros históricos das validações de setembro.
+
 ## Configuração local
 
 No `.env`, preencher `GROVE_API_KEY`. A URL Anthropic conhecida está em

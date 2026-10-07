@@ -20,14 +20,14 @@ Definidos como documentos em `multiagent_brain.agent_registry` (seed em `backend
 
 | agent_key | Papel | Modelo | Tools | Budget (tokens/turno) | Escreve? |
 |---|---|---|---|---|---|
-| `orchestrator` | Classifica intenção e roteia quando a regra determinística não resolve; nunca responde direto ao cliente | claude-haiku-4-5 | `route`, `consolidate` | 2600 | não |
+| `orchestrator` | Classifica intenção e roteia quando a regra determinística não resolve; nunca responde direto ao cliente | claude-sonnet-5-5 | `route`, `consolidate` | 2600 | não |
 | `order_agent` | Status, troca, reembolso de pedido do titular autenticado | claude-sonnet-5-5 | `read_order`, `update_order_status` | 4000 | **sim** — único agente com escrita restrita a status aprovado |
-| `product_agent` | Recomendação via busca vetorial no catálogo | claude-haiku-4-5 | `vector_search_products` | 4500 | não |
-| `support_agent` | Diagnóstico técnico via RAG híbrido na KB | claude-haiku-4-5 | `hybrid_search_kb`, `handoff` | 4500 | **sim** — abre `support_tickets` em escalonamento explícito |
-| `billing_agent` | Fatura, somente leitura | claude-haiku-4-5 | `read_invoice` | 4000 | não |
-| `warranty_agent` | Cobertura de garantia, calculada + `$graphLookup` de reposição | claude-haiku-4-5 | `read_warranty_policy`, `read_order` | 4000 | não (leitura, quem efetiva é `order_agent`) |
-| `loyalty_agent` | Saldo/tier/resgate de pontos | claude-haiku-4-5 | `read_loyalty_account` | 4000 | **sim** — `$inc` restrito em pontos, tabela fixa de recompensas |
-| `logistics_agent` | Transportadora, rastreio, reagendamento | claude-haiku-4-5 | `read_shipment` | 4000 | **sim** — só o campo `reschedule_requested` |
+| `product_agent` | Recomendação via busca vetorial no catálogo | claude-sonnet-5-5 | `vector_search_products` | 4500 | não |
+| `support_agent` | Diagnóstico técnico via RAG híbrido na KB | claude-sonnet-5-5 | `hybrid_search_kb`, `handoff` | 4500 | **sim** — abre `support_tickets` em escalonamento explícito |
+| `billing_agent` | Fatura, somente leitura | claude-sonnet-5-5 | `read_invoice` | 4000 | não |
+| `warranty_agent` | Cobertura de garantia, calculada + `$graphLookup` de reposição | claude-sonnet-5-5 | `read_warranty_policy`, `read_order` | 4000 | não (leitura, quem efetiva é `order_agent`) |
+| `loyalty_agent` | Saldo/tier/resgate de pontos | claude-sonnet-5-5 | `read_loyalty_account` | 4000 | **sim** — `$inc` restrito em pontos, tabela fixa de recompensas |
+| `logistics_agent` | Transportadora, rastreio, reagendamento | claude-sonnet-5-5 | `read_shipment` | 4000 | **sim** — só o campo `reschedule_requested` |
 
 **Config é dado, não código**: qualquer campo acima é editável em runtime via `PATCH /api/admin/agents/{agent_key}` (sem redeploy) — a tela "Agentes" no frontend edita literalmente esse documento.
 

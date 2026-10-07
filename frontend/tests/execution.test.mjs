@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { describeExecution as describe } from '../src/execution.js';
 const a = {agent:'order_agent', model:'luna', status:'ok', started_at:'2026-09-19T12:00:00Z', latency_ms:1000};
-const b = {...a, agent:'billing_agent', model:'haiku', started_at:'2026-09-19T12:00:00.500Z'};
+const b = {...a, agent:'billing_agent', model:'sonnet', started_at:'2026-09-19T12:00:00.500Z'};
 test('concurrent different models and agents, regardless of completion order', () => {
   assert.equal(describe({route_source:'fanout', llm_calls:[b,a]}).label, 'Múltiplas LLMs em paralelo');
   assert.equal(describe({route_source:'fanout', llm_calls:[a,{...b,started_at:'2026-09-19T12:00:02Z'}]}).label, 'Agentes em paralelo');
