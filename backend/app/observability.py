@@ -1,4 +1,4 @@
-"""Tracing distribuído opt-in, em cima de `tracing` do _shared (pov-shared 0.1.4).
+"""Tracing distribuído opt-in, em cima de `tracing` do _shared (pov-shared >= 0.2.0).
 
 Default `TRACE_SINK=off`: `setup_tracing()` não importa OpenTelemetry, não cria spans e a
 demo roda exatamente como antes. Com um sink ligado, `TRACE_MASK_PII` é FORÇADO a 1 — os

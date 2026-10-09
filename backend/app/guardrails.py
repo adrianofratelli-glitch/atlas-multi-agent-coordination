@@ -151,6 +151,13 @@ async def check_input(store: DataStore, message: str, customer: dict, llm=None, 
     # espaço. Sem isso "ignore\u200b todas as instruções" ou "ignore,  todas as instruções" passavam
     # pelo casamento de substring, que é a camada mais barata e a única imune a diluição.
     normalized = fold(message)
+    budget_count = dilution.over_budget(message)
+    if budget_count is not None:
+        # Fail-closed (pov-shared 0.2.0, SH-04): reagrupar ou truncar reabriria a diluição; mensagem com dezenas de
+        # intenções numa só é forma de ataque, não de cliente. Não aprende nada (não há trecho a isolar).
+        result = GuardrailResult(True, "clause_budget", f"{budget_count} intenções > {dilution.MAX_CLAUSES}", 1.0)
+        await log_event(store, customer, message, result)
+        return result
     # Jaccard por cláusula também: o fallback lexical dilui ainda mais rápido que o vetor
     # (a união de palavras cresce com o texto benigno).
     targets = [message] + dilution.clauses(message)
