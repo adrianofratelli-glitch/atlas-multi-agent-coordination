@@ -47,7 +47,7 @@ PoV de atendimento ao cliente multiagente onde o **MongoDB Atlas é tanto o data
 ## Fluxo de dados de um turno (visão de 10.000 pés)
 
 1. **Entrada** — `POST /api/chat`, JWT decodifica `customer_key` (nunca vem do payload).
-2. **Guardrail de entrada** — denylist estático → denylist vetorial (Atlas Vector Search) → LLM classificador (só se necessário).
+2. **Guardrail de entrada** — denylist estático → denylist vetorial (Atlas Vector Search) → LLM classificador (só se necessário). O que o classificador bloqueia vira regra só no trecho malicioso, em quarentena por cliente com TTL de 7 dias; global só com 3 clientes distintos ou aprovação (`guardrail_learning.py`).
 3. **Escopo** — embedding decide `in`/`out`/`chat` (ADR-004); `out` decisivo termina numa orientação determinística: sem agente, sem LLM, **0 tokens**, marcado como `out_of_scope` na timeline; a faixa ambígua vai ao LLM de roteamento. Sem veredito real, vale a lista de palavras (ADR-003).
 4. **Extração de memória** — fatos em 3ª pessoa extraídos por LLM (com `max_price_brl` estruturado para orçamento), deduplicados e gravados com supersessão transacional em `customer_memory`; falha fechada, nunca derruba o turno (ADR-002).
 5. **Roteamento** — regra determinística por keyword (`cheap_route`) prioritária; LLM só decide quando não há sinal de regra nenhum. Fan-out paralelo (`order_agent` + `billing_agent`) para perguntas compostas genuinamente independentes.

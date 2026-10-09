@@ -20,7 +20,7 @@ The UI is in Brazilian Portuguese (used in customer sessions); documentation and
 
 ![Agent registry with model, scope, and a per-agent on/off switch](docs/screenshots/04-agents-registry.png)
 
-**4. Try to break it, including with random questions.** A jailbreak or false-authority prompt hits the denylist first. Anything new goes to a cheap LLM classifier that writes the pattern back into the denylist, so the next attempt is free. The automatic-block cutoff is **measured**, not guessed: the vector does not separate fraud from a legitimate refund ("I never received my order, I want my money back" scores 0.8664 against a fraud phrase). Above the highest measured legitimate score it blocks on its own; in the ambiguous band the classifier decides, so a customer is never blocked by vector proximity alone. And "what's the weather today?" is not an attack: it gets polite guidance with **0 tokens**, no agent and no cache, tagged `🧭 Scope guardrail`. What belongs to the store is decided by a vector search (`scope_probes`) that understands English, slang, and typos, and calls the LLM only in the ambiguous band. Measured on **287 LLM-generated situations** (with a holdout): accuracy **87.3% → 98.6%** on the holdout, 0% of legitimate customers blocked. Hiding a forbidden request behind a long legitimate one does not work either: the input is scored as a whole **and per clause** (measured on the real index: 0.887 alone, 0.7574 diluted, 0.8867 per clause, same cut-offs), at ~+23 ms p50 for a long message because the clause searches run in parallel.
+**4. Try to break it, including with random questions.** A jailbreak or false-authority prompt hits the denylist first. Anything new goes to a cheap LLM classifier that writes back **only the malicious clause** (never the benign opening of a compound message, never a phrase contained in a known legitimate question), quarantined to the customer who sent it with a 7-day TTL; it turns global only after 3 distinct customers send it (or an admin approves it), so one hostile customer cannot get another customer's legitimate question blocked. The automatic-block cutoff is **measured**, not guessed: the vector does not separate fraud from a legitimate refund ("I never received my order, I want my money back" scores 0.8664 against a fraud phrase). Above the highest measured legitimate score it blocks on its own; in the ambiguous band the classifier decides, so a customer is never blocked by vector proximity alone. And "what's the weather today?" is not an attack: it gets polite guidance with **0 tokens**, no agent and no cache, tagged `🧭 Scope guardrail`. What belongs to the store is decided by a vector search (`scope_probes`) that understands English, slang, and typos, and calls the LLM only in the ambiguous band. Measured on **287 LLM-generated situations** (with a holdout): accuracy **87.3% → 98.6%** on the holdout, 0% of legitimate customers blocked. Hiding a forbidden request behind a long legitimate one does not work either: the input is scored as a whole **and per clause** (measured on the real index: 0.887 alone, 0.7574 diluted, 0.8867 per clause, same cut-offs), at ~+23 ms p50 for a long message because the clause searches run in parallel.
 
 ![Guardrails panel: blocks, self-feeding denylist, flagged ambiguous cases](docs/screenshots/06-guardrails.png)
 
@@ -73,6 +73,7 @@ The demo writes for real (facts, episodes, customer cache). The **"Reset demo me
 ```bash
 cd backend
 pytest -q                       # offline unit + adversarial tests (no network)
+(cd ../frontend && npm test)    # frontend unit tests (node --test)
 python tests/adversarial/hostile_http.py <url> [--live]    # hostile inputs against a running server
 python tests/smoke.py <url>     # black-box
 python eval.py <url>            # golden dataset, results in eval_runs
@@ -82,7 +83,7 @@ LIVE=1 pytest tests/test_live.py -q            # ~2 min, essential contracts
 LIVE=1 pytest tests/test_live_random.py -q     # ~4 min, random and out-of-scope questions
 LIVE=1 pytest tests/test_live_scenarios.py -q  # ~10 min, full journey of the 4 customers
 LIVE=1 pytest tests/adversarial -q             # adds real double-click races on the isolated *_test database
-python eval_situations.py                      # ~7 min, 287 LLM-generated situations against the real agent (dev vs holdout)
+python eval_situations.py                      # ~10 min, 287 LLM-generated situations against the real agent (dev vs holdout); exits 1 if any case misses
 ```
 
 `DEMO_MODE` hides bugs that only the real driver produces: timezone-naive datetimes, a raw `ObjectId` in the timeline, a legacy document missing a new field. All three were found exactly that way, in LIVE mode, after the offline suite was green. That is why `git push` runs `.githooks/pre-push` (ruff + offline tests + `test_live.py`); enable it in a fresh clone with `git config core.hooksPath .githooks`.
