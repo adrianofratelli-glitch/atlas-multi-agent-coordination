@@ -4,6 +4,7 @@ import { describeExecution } from './execution.js';
 import Timeline from './components/Timeline.jsx';
 import ReplacementChain from './components/ReplacementChain.jsx';
 import CompliancePage from './components/CompliancePage.jsx';
+import { blocks } from './richtext.js';
 
 const NAV = ['Chat', 'Decisões', 'Métricas'];
 // O rótulo do híbrido não cita mais o RRF na aplicação: a fusão passou a rodar server-side
@@ -67,6 +68,21 @@ function MongoCacheSavings({ run, timeline = [], agentLabels = {} }) {
   );
 }
 
+function Segments({ segments }) {
+  return segments.map((seg, i) => (seg.bold ? <strong key={i}>{seg.text}</strong> : <span key={i}>{seg.text}</span>));
+}
+
+// Resposta do modelo: negrito e listas renderizados, sem HTML cru (ver richtext.js).
+function RichText({ text }) {
+  return blocks(text).map((block, i) => {
+    if (block.type === 'list') {
+      return <ul className="rich-list" key={i}>{block.items.map((item, j) => <li key={j}><Segments segments={item} /></li>)}</ul>;
+    }
+    if (block.type === 'gap') return <span className="rich-gap" key={i} aria-hidden="true" />;
+    return <span className="rich-line" key={i}><Segments segments={block.segments} /></span>;
+  });
+}
+
 function ChatPanel({ messages, input, setInput, send, busy, customerName, demos, suggestions, onSuggestion }) {
   return (
     <section className="chat-panel">
@@ -83,7 +99,7 @@ function ChatPanel({ messages, input, setInput, send, busy, customerName, demos,
                 {message.cacheHit ? '⚡ cache hit · 0 tokens' : `cache miss · ${message.tokens ?? 0} tokens`}
               </span>
             )}
-            <div>{message.text}</div>
+            <div>{message.role === 'assistant' ? <RichText text={message.text} /> : message.text}</div>
           </div>
         ))}
       </div>
