@@ -58,5 +58,5 @@ Fora de escopo emite um evento de timeline `guardrail` com `result.out_of_scope:
 
 - Um pedido legítimo de reembolso agora custa ~300 tokens a mais (a faixa ambígua consulta o classificador). É o preço de não barrar cliente.
 - Pergunta claramente alheia passou a custar **0 tokens** (antes ~300), o que compensa boa parte do item acima.
-- O reforço automático do denylist (`_reinforce_denylist`) grava o que o classificador bloqueia. **Teste hostil contamina o denylist real**: as suítes live apagam o que ensinaram (`source: semantic_llm`, `learned_at >= início do teste`). Entradas aprendidas de teste já desativadas no cluster.
+- O reforço automático do denylist (`_reinforce_denylist`) grava o que o classificador bloqueia. **Teste hostil contamina o denylist real**: as suítes live apagam o que ensinaram (`source: semantic_llm`, `learned_at >= início do teste`). Entradas aprendidas de teste já desativadas no cluster. **Atualização 2026-10-08:** o reforço gravava os 8 primeiros termos numa entrada GLOBAL — a abertura benigna de um ataque composto bloqueava outro cliente. Agora aprende só a cláusula maliciosa, em quarentena por cliente com TTL de 7 dias, e só vira global com 3 clientes distintos ou aprovação (`app/guardrail_learning.py`).
 - Recalibrar `--only block` sempre que o denylist semeado mudar: o corte depende do maior score legítimo medido contra ele.

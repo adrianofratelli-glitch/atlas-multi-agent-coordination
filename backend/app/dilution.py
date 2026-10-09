@@ -9,7 +9,7 @@ trecho malicioso volta a 0.8867. O threshold não muda; muda o que é pontuado.
 
 Usa `split_intents`/`ascore_by_clause` do pacote comum (`pov-shared`, módulo `guardrails`) quando
 instalado. Este repositório é público e o pacote não é: sem ele, um segmentador local equivalente
-(mesmo contrato: frases + conectores, no máximo `MAX_CLAUSES` + 1 chamadas) mantém a proteção — a
+(mesmo contrato: frases + conectores, sem reagrupar; acima de `MAX_CLAUSES` o guardrail bloqueia) mantém a proteção — a
 anti-diluição nunca vira opcional por falta de dependência.
 """
 
@@ -19,10 +19,14 @@ import asyncio
 import re
 from typing import Any, Awaitable, Callable
 
-MAX_CLAUSES = 8
+# Orçamento de intenções pontuadas por mensagem (1 $vectorSearch cada, em paralelo limitado). Desde pov-shared 0.2.0
+# (SH-04) as cláusulas NUNCA são reagrupadas — agrupar vizinhas diluía a intenção proibida entre as benignas. Acima
+# do orçamento o guardrail BLOQUEIA (fail-closed, `over_budget`), em vez de reagrupar ou truncar.
+MAX_CLAUSES = 32
 MAX_LEN = 300
+CONCURRENCY = 8
 
-try:  # pacote comum do workspace (pov-shared >= 0.1.5)
+try:  # pacote comum do workspace (pov-shared >= 0.2.0: sem reagrupamento, NaN ignorado)
     from guardrails import ascore_by_clause as _shared_ascore, split_intents as _shared_split
 
     SOURCE = "pov-shared"
@@ -46,33 +50,34 @@ def _local_split(text: str) -> list[str]:
                 continue
             pieces.extend(part[i:i + MAX_LEN] for i in range(0, len(part), MAX_LEN))
     seen: set[str] = set()
-    clauses = [c for c in pieces if not (c.lower() in seen or seen.add(c.lower()))]
-    if len(clauses) > MAX_CLAUSES:  # agrupa vizinhas: nenhum trecho é descartado
-        size, extra = divmod(len(clauses), MAX_CLAUSES)
-        grouped, i = [], 0
-        for g in range(MAX_CLAUSES):
-            n = size + (1 if g < extra else 0)
-            grouped.append(" ".join(clauses[i:i + n]))
-            i += n
-        clauses = grouped
-    return clauses
+    return [c for c in pieces if not (c.lower() in seen or seen.add(c.lower()))]
 
 
 def clauses(text: str) -> list[str]:
-    """Intenções da mensagem, sem a que repete o texto inteiro."""
-    found = (_shared_split(text, max_clauses=MAX_CLAUSES, max_len=MAX_LEN) if _shared_split
-             else _local_split(text))
+    """Intenções da mensagem, sem a que repete o texto inteiro. Nunca reagrupa nem trunca."""
+    found = _shared_split(text, max_len=MAX_LEN) if _shared_split else _local_split(text)
     whole = re.sub(r"\s+", " ", text or "").strip().lower()
     return [c for c in found if c.lower() != whole]
 
 
+def over_budget(text: str) -> int | None:
+    """Número de intenções quando passa de `MAX_CLAUSES` (o guardrail bloqueia); None dentro do orçamento."""
+    count = len(clauses(text))
+    return count if count > MAX_CLAUSES else None
+
+
 async def best_by_clause(text: str, score_fn: Callable[[str], Awaitable[tuple[float, Any]]]
                          ) -> tuple[float, Any, str | None]:
-    """(score, payload, cláusula vencedora ou None se o texto inteiro venceu). Pontua em paralelo."""
+    """(score, payload, cláusula vencedora ou None se o texto inteiro venceu). Pontua em paralelo (limitado)."""
     if _shared_ascore:
-        result = await _shared_ascore(text, score_fn, max_clauses=MAX_CLAUSES, max_len=MAX_LEN)
+        result = await _shared_ascore(text, score_fn, max_len=MAX_LEN, concurrency=CONCURRENCY)
         return result.score, result.payload, (result.clause if result.by_clause else None)
     targets = [text] + clauses(text)
-    results = await asyncio.gather(*(score_fn(t) for t in targets))
+    sem = asyncio.Semaphore(CONCURRENCY)
+
+    async def run(t: str):
+        async with sem:
+            return await score_fn(t)
+    results = await asyncio.gather(*(run(t) for t in targets))
     index = max(range(len(results)), key=lambda i: results[i][0])
     return results[index][0], results[index][1], (targets[index] if index else None)

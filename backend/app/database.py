@@ -548,7 +548,8 @@ class DataStore:
             "semantic_cache": [[("agent", ASCENDING), ("area", ASCENDING)], [("expires_at", ASCENDING)]],
             "short_term_memory": [[("session_id", ASCENDING)], [("expires_at", ASCENDING)]],
             "long_term_memory": [[("customer_key", ASCENDING)]],
-            "guardrail_denylist": [[("phrase_norm", ASCENDING)]],
+            # 2º índice: TTL das frases aprendidas (seed não tem `expires_at` e nunca expira)
+            "guardrail_denylist": [[("phrase_norm", ASCENDING)], [("expires_at", ASCENDING)]],
             "guardrail_events": [[("at", ASCENDING)]],
             "guardrail_candidates": [[("status", ASCENDING), ("created_at", ASCENDING)]],
             "admin_audit": [[("at", ASCENDING)]],
@@ -569,6 +570,7 @@ class DataStore:
             ("agent_handoffs", 1): 30 * 86400,
             ("agent_traces", 1): 30 * 86400,
             ("semantic_cache", 1): 0,
+            ("guardrail_denylist", 1): 0,
             ("short_term_memory", 1): 0,
             ("guardrail_events", 0): 30 * 86400,
             ("admin_audit", 0): 30 * 86400,

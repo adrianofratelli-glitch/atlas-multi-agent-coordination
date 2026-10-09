@@ -244,6 +244,7 @@ Definidos centralizadamente em `backend/app/database.py:475-527` (`create_standa
 | `short_term_memory` | `(session_id)`, `(expires_at)` | não | **TTL 0** | Memória de sessão — expira sozinha |
 | `long_term_memory` | `(customer_key)` | não | — | Episódios do cliente, sem expiração (é memória de longo prazo por definição) |
 | `guardrail_denylist` | `(phrase_norm)` | sim | — | Match exato de substring rápido + chave de upsert do reforço aprendido |
+| `guardrail_denylist` | `(expires_at)` | não | **TTL 0** | Frase aprendida pelo classificador expira (7 dias, renovada a cada reaprendizado); seed não tem o campo e nunca expira |
 | `guardrail_events` | `(at)` | não | **30 dias** | Log de auditoria de guardrail, não permanente |
 | `guardrail_candidates` | `(status, created_at)` | não | — | Fila de revisão humana ordenada |
 | `admin_audit` | `(at)` | não | **30 dias** | Auditoria administrativa |
