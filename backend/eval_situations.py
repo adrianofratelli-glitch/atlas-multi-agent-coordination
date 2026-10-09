@@ -156,6 +156,19 @@ def main() -> None:
     if args.json:
         Path(args.json).write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"\nresultados salvos em {args.json}", file=sys.stderr)
+    sys.exit(exit_code(results))
+
+
+def exit_code(results: list[dict]) -> int:
+    """0 só com TODOS os casos corretos. Uma suíte que termina 0 com caso errado esconde regressão de roteamento
+    (juiz 2026-10-08: 282/287 e exit 0). 1 = algum caso divergiu do contrato; 2 = algum turno quebrou."""
+    if any(r.get("error") for r in results):
+        return 2
+    wrong = sum(not r["ok"] for r in results)
+    if wrong:
+        print(f"\nFALHOU: {wrong}/{len(results)} casos fora do contrato", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

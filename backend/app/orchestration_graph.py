@@ -130,8 +130,12 @@ async def n_ingest(state: TurnState, config) -> dict:
 
     quick_decision = cheap_route(masked, rules)
     scope_verdict = None
-    weak_product_route = (quick_decision is not None and quick_decision.target_agent == "product_agent"
-                           and not has_catalog_anchor(masked))
+    # Rota de produto apoiada só no verbo genérico ("recomenda"), sem âncora de catálogo: vale para a regra seedada
+    # (`cheap_route`) E para o palpite determinístico do orquestrador ("recomendações de restaurantes", "um bom
+    # thriller") — nos dois casos o classificador de escopo pode recusar com 0 tokens.
+    product_guess = quick_decision is None and deterministic_orchestrator(masked).target_agent == "product_agent"
+    weak_product_route = ((quick_decision is not None and quick_decision.target_agent == "product_agent") or product_guess) \
+        and not has_catalog_anchor(masked)
     from .orchestration import reaches_scope_classifier
     from . import scope_classifier
     if (quick_decision is None and reaches_scope_classifier(masked)) or weak_product_route:

@@ -115,6 +115,7 @@ DOMAIN_VOCAB = (
     "nao liga", "nao conecta", "atendente", "chamado", "escalar", "reclamacao",
     "pontos", "fidelidade", "resgatar", "resgate", "milhas", "beneficio",
     "nota fiscal", "recibo", "encomendei", "minha loja", "custa", "quanto custa",
+    "promocao", "promocoes",
 )
 # Palavras genéricas demais para provar sozinhas que a mensagem é da loja ("me CONTA uma piada", "me AJUDA com meu
 # dever", "qual a MARCA do carro"). Sozinhas NÃO liberam o palpite genérico: só o classificador (LLM) pode decidir; sem
