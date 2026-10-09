@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from . import dilution
+from . import dilution, guardrail_learning
 from .database import DataStore, utcnow
 from .router import normalize
 
@@ -146,7 +146,11 @@ async def check_input(store: DataStore, message: str, customer: dict, llm=None, 
     # (a união de palavras cresce com o texto benigno).
     targets = [message] + dilution.clauses(message)
     best_phrase, best_score = None, 0.0
+    now = utcnow()
     for item in denylist:
+        # Entrada aprendida em quarentena só vale para quem a ensinou; expirada não vale para ninguém.
+        if not guardrail_learning.entry_applies(item, customer["customer_key"], now):
+            continue
         phrase = item["phrase"]
         if fold(phrase).strip() in normalized:
             result = GuardrailResult(True, "denylist", phrase, 1.0)
@@ -243,7 +247,7 @@ async def check_input(store: DataStore, message: str, customer: dict, llm=None, 
             reason = verdict.split(":", 1)[1].strip() if ":" in verdict else "classificado pelo modelo"
             result = GuardrailResult(True, "semantic_llm", reason, 1.0)
             await log_event(store, customer, message, result)
-            await _reinforce_denylist(store, message, reason)
+            await _reinforce_denylist(store, message, reason, customer=customer, vector_match=vector_match, policy=policy)
             return result
         if verdict_upper.startswith("DUVIDA"):
             # abstenção: não bloqueia um cliente legítimo por engano, mas fica registrado pra revisão humana
@@ -283,33 +287,29 @@ def _is_pii_only(phrase: str) -> bool:
     return len(restantes) <= 2
 
 
-async def _reinforce_denylist(store: DataStore, message: str, reason: str) -> None:
-    """Loop de reforço: um ataque novo pego pelo classificador vira frase determinística — não paga custo de LLM de novo."""
-    phrase = " ".join(normalize(message).split()[:8])
-    if not phrase:
-        return
-    if _is_pii_only(phrase):
+async def _reinforce_denylist(store: DataStore, message: str, reason: str, *, customer: dict | None = None,
+                              vector_match: dict | None = None, policy: dict | None = None) -> None:
+    """Loop de reforço: o TRECHO malicioso de um ataque pego pelo classificador vira regra determinística
+    para quem o mandou (quarentena por cliente + TTL); só vira global com N clientes distintos ou aprovação
+    humana. Ver `guardrail_learning` — o reforço antigo aprendia a abertura benigna numa entrada global."""
+    if _is_pii_only(normalize(message)):
         # Não envenena a denylist com dado do cliente. Sem esta guarda, o primeiro cliente
         # que colou CPF+cartão ensinou o sistema a BLOQUEAR qualquer outro que fizesse o
         # mesmo — com a mensagem "você violou a política de segurança", que culpa quem só
         # foi ingênuo. A PII já é mascarada antes de chegar ao LLM; não precisa virar regra.
         logger.info("reforço ignorado: frase é apenas PII mascarada, não ataque")
         return
-    await store.replace_one(
-        "guardrail_denylist",
-        {"phrase_norm": phrase},
-        # `area`/`layer` são obrigatórios para a entrada aprendida entrar também no índice
-        # vetorial: sem `area` ela fica fora do pré-filtro e o reforço só valeria para a
-        # camada de substring, ou seja, só para a frase idêntica.
-        {"phrase": phrase, "phrase_norm": phrase, "active": True, "area": "global",
-         "category": "aprendido_por_classificador", "layer": "semantic",
-         "source": "semantic_llm", "reason": reason, "learned_at": utcnow()},
-        upsert=True,
-    )
+    if customer is None:
+        logger.info("reforço ignorado: sem cliente não há escopo para a quarentena")
+        return
+    await guardrail_learning.learn(store, message, reason, customer, vector_match=vector_match, policy=policy)
 
 
 async def _load_denylist_and_policy(store: DataStore, area: str) -> tuple[list[dict], dict]:
-    denylist = await store.find_many("guardrail_denylist", {"active": True}, limit=100)
+    # Seed/aprovadas e aprendidas em consultas separadas: frases aprendidas acumuladas nunca
+    # empurram as regras do seed para fora do limite.
+    denylist = await store.find_many("guardrail_denylist", {"active": True, "source": {"$ne": guardrail_learning.LEARNED_SOURCE}}, limit=500)
+    denylist += await store.find_many("guardrail_denylist", {"active": True, "source": guardrail_learning.LEARNED_SOURCE}, limit=1000)
     policy = await store.find_one("guardrail_policies", {"area": area, "active": True}, brain=True) or await store.find_one(
         "guardrail_policies", {"area": "default", "active": True}, brain=True
     ) or {"threshold": 0.86, "semantic_fail_mode": "closed"}
