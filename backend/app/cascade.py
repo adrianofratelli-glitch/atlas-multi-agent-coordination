@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Literal
 
+from .clock import uses_current_date
 from .budget import estimate_tokens
 from .config import get_settings
 from . import turn_classifier
@@ -262,6 +263,10 @@ async def cascade_store_turn(
     mutável do cliente, memória, handoff ou escrita. Mesmo quando elegível, o escopo global
     ainda exige uma intenção de catálogo/KB explicitamente permitida.
     """
+    # Resposta que envelhece não entra em NENHUMA camada (nem no curto prazo, que vive 24 h): a que cita a
+    # data de hoje vira mentira amanhã, e a que usou a web vale só o TTL do resultado (web_search_cache).
+    if uses_current_date(answer) or any(event.get("op") == "external" for event in timeline):
+        return None
     question_norm = normalize(message)
     now = utcnow()
     await store.replace_one(

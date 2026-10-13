@@ -24,7 +24,7 @@ from time import perf_counter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app import chaos, resilience  # noqa: E402
+from app import chaos, resilience, web_search  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.database import DataStore  # noqa: E402
 from app.llm import LLMGateway  # noqa: E402
@@ -313,6 +313,91 @@ async def scenario_crash_resume() -> Verdict:
                    perf_counter() - started, skipped=result.get("skipped", False))
 
 
+@contextlib.contextmanager
+def web_on():
+    """Liga a busca web no mundo em memória (o registro real falha fechado em DEMO_MODE) com um provedor falso
+    que conta as chamadas — o caos é injetado na fronteira `call_tool("web_search")`, não no provedor."""
+    calls: list[str] = []
+
+    async def provider(query, _cfg):
+        calls.append(query)
+        return {"results": [{"title": "Notícia", "url": "https://example.com/n", "content": "sem atrasos"}]}
+
+    async def config(_store, area):
+        return {**web_search.DEFAULTS, "enabled": True} if area == "varejo" else None
+
+    saved = (web_search.PROVIDER_CALL, web_search.get_config)
+    web_search.PROVIDER_CALL, web_search.get_config = provider, config
+    try:
+        yield calls
+    finally:
+        web_search.PROVIDER_CALL, web_search.get_config = saved
+
+
+WEB_TURN = "qual a transportadora do PED-1001?"   # PED-1001: em trânsito, previsão vencida → busca a transportadora
+
+
+def _answered_from_mongo(response) -> bool:
+    return "Correios Express" in response.response and "venceu" in response.response
+
+
+def _web_events(response) -> list:
+    return [event for event in response.timeline if event.op == "external"]
+
+
+async def scenario_web_timeout() -> Verdict:
+    """O provedor de busca web para de responder."""
+    assertion = ("turno termina em < 5s respondendo com o documento do MongoDB (transportadora, previsão vencida); "
+                 "o evento web registra a falha e nenhuma fonte é inventada")
+    with env(CHAOS=1, CHAOS_SCENARIO="timeout", CHAOS_TARGET="tool:web_search", CHAOS_DELAY=20,
+             TOOL_TIMEOUT_SECONDS=1, AGENT_TIMEOUT_SECONDS=10), web_on():
+        _, service = await world()
+        started = perf_counter()
+        response = await service.run_turn(WEB_TURN, ANA, None)
+        elapsed = perf_counter() - started
+    events = _web_events(response)
+    ok = (elapsed < 5 and _answered_from_mongo(response) and bool(events)
+          and events[0].result["error"] and not events[0].result["sources"])
+    return Verdict("web_timeout", assertion, bool(ok),
+                   f"elapsed={elapsed:.2f}s mongo={_answered_from_mongo(response)} "
+                   f"erro={events[0].result['error'] if events else None}", elapsed)
+
+
+async def scenario_web_circuit_breaker() -> Verdict:
+    """Provedor de busca falhando sem parar: o breaker abre e para de chamar."""
+    assertion = ("depois de 4 falhas consecutivas o web_search entra em circuito aberto, as chamadas seguintes nem "
+                 "chegam ao provedor e todo turno continua respondendo com o MongoDB")
+    with env(CHAOS=1, CHAOS_SCENARIO="status", CHAOS_STATUS=503, CHAOS_TARGET="tool:web_search"), web_on() as calls:
+        _, service = await world()
+        started = perf_counter()
+        responses = [await service.run_turn(WEB_TURN, ANA, None) for _ in range(6)]
+        elapsed = perf_counter() - started
+        opened = resilience.circuit_state().get("web_search", {}).get("open", False)
+    last = _web_events(responses[-1])
+    ok = (opened and calls == [] and all(_answered_from_mongo(r) for r in responses)
+          and last and last[0].result["error"] == "ToolOpenCircuit")
+    return Verdict("web_circuit_breaker", assertion, bool(ok),
+                   f"aberto={opened} chamadas_ao_provedor={len(calls)} "
+                   f"último_erro={last[0].result['error'] if last else None}", elapsed)
+
+
+async def scenario_web_malformed_payload() -> Verdict:
+    """O provedor responde, mas com payload fora do formato."""
+    assertion = ("o payload ruim é recusado pelo parser (nunca repassado ao modelo), o turno responde com o MongoDB "
+                 "e nada é gravado no cache de resultado")
+    with env(CHAOS=1, CHAOS_SCENARIO="malformed", CHAOS_TARGET="tool:web_search"), web_on():
+        store, service = await world()
+        started = perf_counter()
+        response = await service.run_turn(WEB_TURN, ANA, None)
+        elapsed = perf_counter() - started
+        cached = await store.find_many("web_search_cache", {})
+    events = _web_events(response)
+    ok = _answered_from_mongo(response) and bool(events) and events[0].result["error"] and cached == []
+    return Verdict("web_malformed_payload", assertion, bool(ok),
+                   f"mongo={_answered_from_mongo(response)} erro={events[0].result['error'] if events else None} "
+                   f"cache={len(cached)}", elapsed)
+
+
 SCENARIOS = {
     "tool_timeout": scenario_tool_timeout,
     "agent_hang": scenario_agent_hang,
@@ -325,6 +410,9 @@ SCENARIOS = {
     "legacy_500_flag": scenario_legacy_500_flag,
     "concurrent_same_conversation": scenario_concurrent_same_conversation,
     "crash_resume": scenario_crash_resume,
+    "web_timeout": scenario_web_timeout,
+    "web_circuit_breaker": scenario_web_circuit_breaker,
+    "web_malformed_payload": scenario_web_malformed_payload,
 }
 
 

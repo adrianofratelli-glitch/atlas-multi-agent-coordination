@@ -47,11 +47,11 @@ def _jsonable(value: Any) -> Any:
 
 
 class TimelineEvent(BaseModel):
-    category: Literal["agent", "memory", "guardrail", "cache", "handoff", "fanout"]
+    category: Literal["agent", "memory", "guardrail", "cache", "handoff", "fanout", "web"]
     title: str
     agent: str | None = None
     collection: str | None = None
-    op: Literal["read", "write", "vectorSearch", "hybridSearch", "changeStream", "graphLookup"] | None = None
+    op: Literal["read", "write", "vectorSearch", "hybridSearch", "changeStream", "graphLookup", "external"] | None = None
     filter: dict[str, Any] | None = None
     result: Any = None
     reason: str | None = None

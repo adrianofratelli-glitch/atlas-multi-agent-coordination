@@ -16,3 +16,14 @@ test('bullet lines are grouped into one list; headings lose the hashes', () => {
 test('html stays plain text (React escapes it)', () => {
   assert.deepEqual(blocks('<b>x</b>'), [{ type: 'p', segments: [{ text: '<b>x</b>' }] }]);
 });
+test('urls become link segments (http/https only); trailing punctuation stays outside', () => {
+  assert.deepEqual(inline('Fonte: https://example.com/a?b=1.'), [
+    { text: 'Fonte: ' }, { text: 'https://example.com/a?b=1', href: 'https://example.com/a?b=1' }, { text: '.' }]);
+  assert.deepEqual(inline('veja [a notícia](https://g1.globo.com/x) hoje'), [
+    { text: 'veja ' }, { text: 'a notícia', href: 'https://g1.globo.com/x' }, { text: ' hoje' }]);
+});
+test('non-http schemes never become links', () => {
+  for (const text of ['[x](javascript:alert(1))', 'data:text/html,<b>x</b>', 'ftp://host/arquivo']) {
+    assert.ok(inline(text).every((seg) => !seg.href), text);
+  }
+});

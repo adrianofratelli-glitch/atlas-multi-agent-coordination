@@ -338,7 +338,8 @@ class DataStore:
             target = next((item for item in bucket if _matches(item, query)), None)
             was_insert = target is None
             if target is None and upsert:
-                target = {**query, "_id": f"{name}-{len(bucket) + 1}"}
+                # `_id` da consulta prevalece (upsert por chave natural, como o driver real faz)
+                target = {"_id": f"{name}-{len(bucket) + 1}", **query}
                 bucket.append(target)
             if target is None:
                 return 0
@@ -364,6 +365,37 @@ class DataStore:
                 else:
                     array.append(copy.deepcopy(value))
             return 1
+
+    async def reserve_quota(self, name: str, period: str, limit: int, *, brain: bool = True) -> tuple[bool, int]:
+        """Reserva UMA unidade da cota do período, atomicamente: `$inc` condicional (`used < limit`) com upsert.
+
+        No Atlas, documento do período já no teto = o filtro não casa, o upsert tenta inserir o mesmo `_id` e o
+        `DuplicateKeyError` é a resposta "cota estourada" — sem janela de corrida entre ler e incrementar.
+        Devolve (reservou, usados_depois)."""
+        now = utcnow()
+        if not self.memory:
+            from pymongo import ReturnDocument
+            from pymongo.errors import DuplicateKeyError
+            coll = self._collection(name, brain)
+            try:
+                doc = await coll.find_one_and_update(
+                    {"_id": period, "used": {"$lt": limit}},
+                    {"$inc": {"used": 1}, "$set": {"limit": limit, "updated_at": now}},
+                    upsert=True, return_document=ReturnDocument.AFTER)
+                return True, int(doc["used"])
+            except DuplicateKeyError:
+                current = await coll.find_one({"_id": period})
+                return False, int((current or {}).get("used", limit))
+        async with self._lock:
+            bucket = self._bucket(name, brain)
+            doc = next((item for item in bucket if item.get("_id") == period), None)
+            if doc is None:
+                doc = {"_id": period, "used": 0}
+                bucket.append(doc)
+            if doc["used"] >= limit:
+                return False, int(doc["used"])
+            doc.update(used=doc["used"] + 1, limit=limit, updated_at=now)
+            return True, int(doc["used"])
 
     async def aggregate(self, name: str, pipeline: list[dict], *, brain: bool = False) -> list[dict]:
         return mangle("tool", f"{name}.aggregate", await call_tool(
@@ -529,7 +561,8 @@ class DataStore:
                     messages.append(f"{collection}: validator best-effort ({exc})")
         return messages
 
-    async def create_standard_indexes(self) -> None:
+    async def create_standard_indexes(self, only: set[str] | None = None) -> None:
+        """Índices B-tree/únicos/TTL. `only` restringe a algumas collections (seed parcial, ex.: busca web)."""
         if self.memory:
             return
         definitions = {
@@ -556,6 +589,10 @@ class DataStore:
             "eval_runs": [[("at", ASCENDING)]],
             "support_tickets": [[("customer_key", ASCENDING), ("created_at", ASCENDING)]],
             "redemptions": [[("customer_key", ASCENDING), ("at", ASCENDING)]],
+            # Busca web (ADR-005): o resultado envelhece em horas (TTL pelo `expires_at` de cada entrada) e a
+            # auditoria de chamada externa expira em 30 dias, como as outras trilhas.
+            "web_search_cache": [[("expires_at", ASCENDING)]],
+            "external_calls": [[("at", ASCENDING)], [("area", ASCENDING), ("at", ASCENDING)]],
             # Sem TTL de propósito: agent_traces/agent_handoffs são observabilidade e expiram em
             # 30 dias; decisão e trilha de auditoria são registro de conformidade e ficam.
             # Idempotência da pausa: (subject_id, action, status) é o que open_review consulta
@@ -575,8 +612,12 @@ class DataStore:
             ("guardrail_events", 0): 30 * 86400,
             ("admin_audit", 0): 30 * 86400,
             ("eval_runs", 0): 90 * 86400,
+            ("web_search_cache", 0): 0,
+            ("external_calls", 0): 30 * 86400,
         }
         for collection, indexes in definitions.items():
+            if only is not None and collection not in only:
+                continue
             for position, keys in enumerate(indexes):
                 options: dict[str, Any] = {}
                 if (collection, position) in unique:

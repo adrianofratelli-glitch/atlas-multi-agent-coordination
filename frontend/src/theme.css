@@ -162,10 +162,16 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .category-badge.cache { color: var(--cyan); background: rgba(4,152,236,.12); }
 .category-badge.handoff { color: var(--teal); background: rgba(0,163,92,.16); }
 .category-badge.fanout { color: #f4d35e; background: rgba(244,211,94,.12); }
+.category-badge.web { color: #ff8a80; background: rgba(255,138,128,.12); }
 .event-card h4 { margin: 9px 0 7px; color: var(--text-pri); font-size: 14px; }
 .mongo-operation { display: flex; gap: 8px; align-items: center; color: var(--text-muted); font-size: 10px; }
 .mongo-operation span { color: var(--accent); }
 .mongo-operation code { font-size: 10px; }
+.external-operation { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--text-muted); font-size: 10px; min-width: 0; }
+.external-operation span { color: #ff8a80; }
+.external-operation code { font-size: 10px; overflow-wrap: anywhere; }
+.external-operation ul { flex-basis: 100%; margin: 4px 0 0; padding-left: 16px; }
+.external-operation a, .rich-line a, .rich-list a { color: var(--accent); overflow-wrap: anywhere; }
 .event-data { margin-top: 8px; display: grid; gap: 5px; }
 .event-data details { border-top: 1px solid var(--border-subtle); padding-top: 6px; }
 .event-data summary { cursor: pointer; color: var(--text-muted); font-size: 10px; }

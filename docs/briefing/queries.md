@@ -214,6 +214,9 @@ Todas passam por `DataStore` (`database.py`), que injeta `session=` de transaç�
 | `customer_memory` com supersessão (`active: False` no antigo, novo documento) | `memory.py` (`extract_and_store`) | Nunca sobrescreve um fato — encerra o velho e insere o novo, mantendo histórico completo |
 | `agent_conversations` update via `$push`/`$each`/`$slice: -20` | `orchestration.py:428-472` (`_update_conversation`) | Delta atômico no servidor, nunca um `replace_one` do documento inteiro — evita lost update em turnos concorrentes na mesma conversa |
 | `pending_reviews.find_one({"subject_id", "action", "status": "pending"})` (idempotência de abertura) | `reviews.py:55` | Mesmo caso de qualidade não abre duplicado se o cliente insistir na mesma frase |
+| Cota mensal da busca web: `find_one_and_update({"_id": "AAAA-MM", "used": {"$lt": limit}}, {"$inc": {"used": 1}}, upsert=True)` | `database.py:reserve_quota` (usado por `web_search.py`) | Atômico, sem ler-e-depois-incrementar: documento do mês no teto ⇒ o upsert colide com o `_id` (`DuplicateKeyError`) e o provedor nem é chamado |
+| `web_search_cache.find_one({"_id": sha256(consulta normalizada), "expires_at": {"$gt": agora}})` | `web_search.py:_run` | Match exato com TTL de 6 h: repetir a busca não gasta crédito. Cache semântico do resultado web foi medido e descartado (ADR-005) |
+| `tool_registry.find_one({"_id": "web_search"})` uma vez por turno | `orchestration_graph.py:n_ingest` | Liga/desliga por área ao vivo, sem deploy; ausente ou ilegível = ferramenta desligada |
 | Change Stream em `agent_handoffs` filtrado por `customer_key` no `$match` | `database.py:335-359` (`watch_handoffs`) | Live feed server-side já isolado por dono, sem `find_one` extra por evento — `customer_key` é denormalizado no handoff exatamente para isso |
 
 ---
@@ -249,6 +252,8 @@ Definidos centralizadamente em `backend/app/database.py:475-527` (`create_standa
 | `guardrail_candidates` | `(status, created_at)` | não | — | Fila de revisão humana ordenada |
 | `admin_audit` | `(at)` | não | **30 dias** | Auditoria administrativa |
 | `eval_runs` | `(at)` | não | **90 dias** | Histórico de avaliação (golden dataset), retenção mais longa |
+| `web_search_cache` | `(expires_at)` | não | **TTL 0 = expira no valor do campo** | Resultado web envelhece em horas: cada entrada grava `expires_at` = agora + `cache_ttl_seconds` do registro (6 h) |
+| `external_calls` | `(at)`, `(area, at)` | não | **30 dias** | Auditoria da chamada externa (consulta mascarada, URLs, latência, cache hit, cota) |
 | `support_tickets` | `(customer_key, created_at)` | não | — | Chamados do cliente ordenados |
 | `redemptions` | `(customer_key, at)` | não | — | Suporte à checagem de idempotência de resgate |
 | `pending_reviews` | `(review_id)` | sim | — | Lookup direto |

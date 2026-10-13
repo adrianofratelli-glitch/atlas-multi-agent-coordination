@@ -154,6 +154,8 @@ async def ensure_seeded(store: DataStore, *, wait_indexes: bool = True) -> list[
             messages.append(f"probes copiados: {name} (+{len(documents)}, total {len(existing) + len(documents)})")
         messages += await _probe_indexes(store)
 
+    from seed_tool_registry import seed_tool_registry
+    messages.append(await seed_tool_registry(store))  # sempre: o liga/desliga ao vivo volta ao padrão
     if wait_indexes:
         messages.append(f"índices Search/Vector: {await _indexes_ready(store)}")
     return messages

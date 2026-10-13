@@ -2,6 +2,7 @@
 
 - Status: aceito
 - Data: 2026-09-21
+- Atualizado em 2026-10-13 por [ADR-005](ADR-005-busca-web-deterministica-governada-pelo-atlas.md): a busca web **não** muda este gate. Fora de escopo continua recusado com 0 tokens; a web só entra no `logistics_agent`, para entrega vencida, com consulta montada pelo servidor.
 - Relacionado: [ADR-003](ADR-003-guardrail-em-duas-faixas.md) (guardrail em duas faixas e fora de escopo), [ADR-002](ADR-002-memoria-llm-e-turno-pessoal.md)
 
 ## Contexto
@@ -97,3 +98,10 @@ Um bug de medição pego no caminho: ao ampliar o conjunto, os limiares saíram 
 - Adicionar probes reindexa de forma assíncrona: recalibrar só depois de o probe novo ser o vizinho nº 1 dele mesmo (o score de texto idêntico **não** chega a 1,0 neste cluster).
 - Ajustar probes olhando o dev contamina a medição do dev; por isso o holdout é o número a reportar.
 - Regressão nova precisa entrar em `situations.json` (ou nos seeds de `generate_situations.py`) — é assim que a próxima falha real deixa de escorregar duas vezes.
+
+## Nota de 2026-10-13 (ADR-005)
+
+A proposta de responder fora de escopo com um agente de busca web foi avaliada e recusada: trocaria o 0 token
+deste gate por classificador de segurança + loop de LLM + crédito do provedor em toda pergunta alheia, e repetiria
+a PoV irmã de agente único. Os testes de `tests/test_out_of_scope.py` (clima, dólar, "que dia é hoje" recusados sem
+chamada de LLM) continuam valendo sem exceção, e `ROUTER_PROMPT` não ganhou chave nova.

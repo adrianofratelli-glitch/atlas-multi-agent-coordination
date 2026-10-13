@@ -171,7 +171,19 @@ Não são "tools" no sentido de tool-calling do LLM (function calling) — são 
 - `read_invoice` → `run_billing_agent`
 - `read_warranty_policy` / `read_order` → `run_warranty_agent` (+ `$graphLookup` de reposição)
 - `read_loyalty_account` → `run_loyalty_agent`
-- `read_shipment` → `run_logistics_agent`
+- `read_shipment` → `run_logistics_agent` (+ `web_search`, só com entrega vencida — ver abaixo)
+
+### Relógio e busca web (ADR-005)
+
+- Todo prompt de agente recebe data, hora e fuso (`clock.clock_block`, America/Sao_Paulo) no contexto **dinâmico** de `llm_synthesize`; o estático (`GROUNDING_RULES`) não muda, para não perder o prompt cache.
+- Conta de datas é Python: `warranty_agent` calcula `expires_at` por mês de calendário e `days_left`; `logistics_agent` acrescenta `days_until_delivery` e `delivery_overdue` ao documento do envio. O modelo só lê esses campos.
+- **Busca web não é loop de ferramenta.** O `logistics_agent` consulta a web só quando `delivery_overdue` é verdadeiro **e** `multiagent_brain.tool_registry` liga a ferramenta para a área do cliente (`financeiro` fica desligada no seed). A consulta é montada pelo servidor a partir do documento (`"<transportadora> atraso entregas Brasil"`); o texto do cliente nunca sai do processo.
+- O resultado volta entre `<resultados_web_nao_confiaveis>` com a instrução de ignorar comandos, citar a URL e avisar quando a fonte está desatualizada. Prazo e status continuam vindo do MongoDB.
+- Falha do provedor, cota estourada ou circuito aberto: o agente responde só com o documento do MongoDB.
+- **Taint:** depois de um evento `op: "external"` no turno, nenhum agente de `WRITE_EFFECT_AGENTS` roda (nem por handoff); a resposta pede confirmação numa nova mensagem e a timeline registra `reason: "web_taint"`.
+- Fora de escopo (clima, dólar, futebol) segue recusado com 0 tokens: a web não é resposta geral.
+- Mensagem mista: a lista de palavras (`router.out_of_scope_sentences`) só propõe as frases alheias; `orchestration_graph._confirmed_out_of_scope` confirma cada uma no classificador por embedding e só `out` decisivo vira o apêndice "isso foge do que eu resolvo" (continuação como "quantos dias faltam?" não é mais anexada). Sem veredito real, vale a lista.
+- Resposta com busca web sem link recebe as fontes anexadas pelo servidor.
 
 O LLM (`llm_synthesize`, `agents.py:43-50`) entra só DEPOIS que o dado já foi buscado — ele redige a frase final sobre o documento já retornado, nunca decide a query. Isso é uma decisão de segurança deliberada: ownership e filtros nunca dependem do raciocínio do modelo.
 

@@ -2,7 +2,24 @@ import QueryDetails from './QueryDetails.jsx';
 
 const CATEGORY_LABELS = {
   agent: 'agente', memory: 'memória', guardrail: 'guardrail', cache: 'cache', handoff: 'coordenação', fanout: 'paralelo',
+  web: 'fonte externa',
 };
+
+// Chamada externa (busca web, ADR-005) é ator próprio, não collection: mostra provedor, consulta e fontes, e só
+// diz "cache Atlas" quando o resultado saiu do `web_search_cache` sem chamar o provedor.
+function ExternalCall({ event }) {
+  const result = event.result || {};
+  const sources = (result.sources || []).filter((url) => /^https?:\/\//.test(url));
+  return (
+    <div className="external-operation">
+      <span>{(event.filter?.provider || 'web').toUpperCase()}{result.cache_hit ? ' · cache Atlas' : ''}</span>
+      {event.filter?.query && <code>{event.filter.query}</code>}
+      {sources.length > 0 && (
+        <ul>{sources.map((url) => <li key={url}><a href={url} target="_blank" rel="noopener noreferrer">{url}</a></li>)}</ul>
+      )}
+    </div>
+  );
+}
 
 function JsonBlock({ value }) {
   if (value === undefined || value === null) return null;
@@ -32,14 +49,16 @@ export default function Timeline({ events }) {
               {!event.replayed && event.duration_ms > 0 && <small>{Math.round(event.duration_ms)} ms</small>}
             </div>
             <h4>{event.title}</h4>
-            {event.collection && <div className="mongo-operation"><span>MongoDB</span><code>{event.collection}</code></div>}
+            {event.op === 'external' ? <ExternalCall event={event} />
+              : event.collection && <div className="mongo-operation"><span>MongoDB</span><code>{event.collection}</code></div>}
             {event.reason && <p className="handoff-reason">“{event.reason}”</p>}
             <div className="event-data">
               {event.result !== undefined && <details open={event.category === 'handoff'}><summary>Resultado</summary><JsonBlock value={event.result} /></details>}
             </div>
             <QueryDetails
               operation={event.op}
-              namespace={event.collection}
+              namespace={event.collection || (event.op === 'external' ? event.filter?.provider : undefined)}
+              label={event.op === 'external' ? 'Ver chamada externa' : undefined}
               query={event.query || (event.filter ? { filter: event.filter } : undefined)}
               explain={event.explain}
             />

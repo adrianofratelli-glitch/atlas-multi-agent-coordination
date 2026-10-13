@@ -2,10 +2,11 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from time import perf_counter
 from typing import Any
 
+from .clock import add_months, clock_block, days_from_today, parse_day
 from .database import DataStore, as_aware, run_in_transaction_with_retry, utcnow
 from .guidance import customer_snapshot, format_options, no_data_reply
 from .memory import active_budget
@@ -18,6 +19,7 @@ from .graph import (build_order_chain_pipeline, summarize_order_chain,
 from .retrieval import (build_kb_lexical_pipeline, build_kb_rank_fusion_pipeline,
                         build_kb_vector_pipeline, reciprocal_rank_fusion)
 from .router import CATEGORY_KEYWORDS, normalize
+from . import web_search
 
 
 GROUNDING_RULES = (
@@ -45,7 +47,8 @@ async def llm_synthesize(llm, agent_doc: dict | None, budget, message: str, docu
     e segura (ownership, filtros), só a fala final é gerada, o que cobre qualquer forma de perguntar, não só o script."""
     if not llm or not getattr(llm, "client", None) or not agent_doc:
         return None
-    context = f"{extra}\n\nDocumentos:\n{json.dumps(documents, ensure_ascii=False, default=str)}"
+    # Relógio no bloco DINÂMICO: no estático (GROUNDING_RULES) invalidaria o prompt cache a cada minuto.
+    context = f"{clock_block()}\n{extra}\n\nDocumentos:\n{json.dumps(documents, ensure_ascii=False, default=str)}"
     text, _ = await llm.complete(agent=agent_doc, user_message=message, dynamic_context=context, budget=budget, static_context=GROUNDING_RULES)
     return text
 
@@ -296,13 +299,16 @@ async def run_warranty_agent(store: DataStore, message: str, customer: dict, llm
     policy = await store.find_one("warranty_policies", {"category": category}) if category else None
     months = policy["months"] if policy else 12
     purchased_at = next((item["at"] for item in clean.get("timeline", []) if item["status"] == "criado"), clean.get("timeline", [{}])[0].get("at"))
-    covered, expires_at = None, None
-    if purchased_at:
-        purchase_date = datetime.strptime(purchased_at, "%Y-%m-%d")
-        expiry_date = purchase_date + timedelta(days=months * 30)
-        expires_at = expiry_date.strftime("%Y-%m-%d")
-        covered = utcnow().replace(tzinfo=None) <= expiry_date
-    doc = {"order_id": clean["order_id"], "product": clean["product"], "category": category, "warranty_months": months, "purchased_at": purchased_at, "expires_at": expires_at, "covered": covered}
+    covered, expires_at, days_left = None, None, None
+    purchase_date = parse_day(purchased_at) if purchased_at else None
+    if purchase_date:
+        # Mês de calendário: `months * 30` dava 360 dias para "12 meses" e errava a borda do prazo.
+        expiry_date = add_months(purchase_date, months)
+        expires_at = expiry_date.isoformat()
+        days_left = days_from_today(expiry_date)
+        covered = days_left >= 0
+    doc = {"order_id": clean["order_id"], "product": clean["product"], "category": category, "warranty_months": months,
+           "purchased_at": purchased_at, "expires_at": expires_at, "covered": covered, "days_left": days_left}
 
     # Travessia de grafo: a garantia deste pedido depende de quantas vezes ele já foi reposto.
     # Leitura pura — este agente EXPLICA a cobertura, quem efetiva a troca é o order_agent.
@@ -517,6 +523,11 @@ async def run_logistics_agent(store: DataStore, message: str, customer: dict, ll
         shipments = await store.find_many("shipments", query, limit=1, sort=[("estimated_delivery", -1)])
         shipment = shipments[0] if shipments else None
     clean = public_document(shipment)
+    if clean and clean.get("current_location") != "Entregue":
+        # Conta feita aqui, não pelo modelo: sem a data de hoje, uma previsão vencida era lida como futura.
+        days = days_from_today(clean.get("estimated_delivery"))
+        if days is not None:
+            clean = {**clean, "days_until_delivery": days, "delivery_overdue": days < 0}
     if not clean:
         snapshot = await customer_snapshot(store, customer)
         response = no_data_reply("shipment", snapshot, identifier=explicit_order_id)
@@ -557,13 +568,39 @@ async def run_logistics_agent(store: DataStore, message: str, customer: dict, ll
         return AgentResult(response, event)
 
     response = f"Pedido {clean['order_id']}: transportadora **{clean['carrier']}**, código **{clean['tracking_code']}**, {clean['current_location']}, previsão **{clean['estimated_delivery']}**."
-    trivial = _is_trivial_lookup(message, order_id)
-    synthesized = None if trivial else await llm_synthesize(llm, agent_doc, budget, message, clean, "O cliente pode perguntar qualquer coisa sobre transportadora, rastreio, localização ou previsão de entrega — responda com base no documento acima, nunca invente transportadora ou prazo." + scope_hint)
+    if clean.get("delivery_overdue"):
+        response += (f" A previsão venceu há {-clean['days_until_delivery']} dia(s); se quiser, peço o reagendamento "
+                     "à transportadora.")
+    # Busca web (ADR-005): decidida pelo SERVIDOR (previsão vencida, fato calculado acima + ferramenta ligada para a
+    # área no tool_registry) e com consulta montada do documento — o texto do cliente não sai do processo.
+    web_events, web_text = [], ""
+    web_cfg = (context or {}).get("web_cfg")
+    if clean.get("delivery_overdue") and web_cfg and clean.get("carrier"):
+        web_text, web_event = await web_search.search(
+            store, web_search.carrier_query(clean["carrier"]), area=customer["area"],
+            customer_key=customer["customer_key"], agent="logistics_agent", cfg=web_cfg)
+        web_events.append(web_event)
+        sources = (web_event.result or {}).get("sources") or []
+        if sources:
+            response += f" Notícias recentes sobre a {clean['carrier']}: {sources[0]}"
+    trivial = _is_trivial_lookup(message, order_id) and not web_text
+    instruction = ("O cliente pode perguntar qualquer coisa sobre transportadora, rastreio, localização ou previsão de entrega — "
+                   "responda com base no documento acima, nunca invente transportadora ou prazo. Se `delivery_overdue` for "
+                   "true, diga que a previsão já passou (há `-days_until_delivery` dias) e ofereça o reagendamento.")
+    if web_text:
+        instruction += f"\n\n{web_search.WEB_GROUNDING}\n{web_text}"
+    synthesized = None if trivial else await llm_synthesize(llm, agent_doc, budget, message, clean, instruction + scope_hint)
+    if synthesized and web_events and "http" not in synthesized:
+        # Citar a fonte é regra de servidor, não pedido ao modelo: medido ao vivo, ele às vezes resume as fontes
+        # ("são antigas, não confirmam a situação") sem dar o link de nenhuma.
+        sources = (web_events[0].result or {}).get("sources") or []
+        if sources:
+            synthesized += "\n\nFontes consultadas: " + " · ".join(sources[:2])
     title = "Consulta de logística" + (" (resposta sintetizada pelo modelo)" if synthesized else " (modo econômico, sem chamada ao modelo)" if trivial else "")
     event = TimelineEvent(category="agent", title=title, agent="logistics_agent", collection="shipments", op="read", filter=query, result=clean, duration_ms=(perf_counter() - started) * 1000)
     if wants_final_order_confirmation and order_already_ran:
-        return AgentResult(synthesized or response, event, "order_agent", "cliente pediu confirmação final do pedido após a etapa logística")
-    return AgentResult(synthesized or response, event)
+        return AgentResult(synthesized or response, event, "order_agent", "cliente pediu confirmação final do pedido após a etapa logística", extra_events=web_events)
+    return AgentResult(synthesized or response, event, extra_events=web_events)
 
 
 def _weighted_score(relevance: float, rating: float, stock: int) -> float:

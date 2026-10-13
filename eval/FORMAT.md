@@ -74,6 +74,14 @@ cd backend && ../.venv/bin/python eval_routing.py --json hoje.json --compare ont
 |---|---|---|---|---|---|
 | `demo` (offline) | 21 (3 exigem LLM) | 100,0% | 100,0% | 0,125 | 43,5 |
 | `live` (Atlas + LLM, banco `multi_agent_poc_test`) | 24 | 100,0% | 100,0% | 0,125 | 762,6 |
+| `live`, 13/10/2026, agentes em Sonnet, **sem** o relógio no prompt (monkeypatch) | 24 | 100,0% | 100,0% | 0,125 | 1.355,8 |
+| `live`, 13/10/2026, **com** o relógio (ADR-005) | 24 | 100,0% | 100,0% | 0,125 | 1.674,8 |
+
+De 22/09 para 13/10 os sete agentes Haiku passaram a Sonnet (`59813ef`), que escreve respostas mais longas: daí o
+salto de 762,6 para 1.355,8 sem mudar rota. O relógio no prompt custa mais **319 tokens/turno (+23%)**, medido no
+mesmo código com e sem o bloco — bem mais que as ~60 do próprio bloco, porque o modelo passa a comentar datas
+("o vencimento é anterior a hoje…", "a previsão já passou há 86 dias…"). Uma rodada de cada lado: a variância do
+LLM entre rodadas não está medida.
 
 Três casos (`route-011`, `route-018`, `route-024`) só têm veredito com LLM: dependem do
 orquestrador ou do classificador do guardrail, que em DEMO_MODE não existem.

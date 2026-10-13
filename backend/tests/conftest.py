@@ -12,7 +12,8 @@ import os
 import pytest
 
 _LEAKY_ENV = ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_API_URL", "GROVE_API_KEY",
-              "GROVE_ANTHROPIC_BASE_URL", "GROVE_CHAT_COMPLETIONS_URL", "GROVE_OPENAI_MODELS")
+              "GROVE_ANTHROPIC_BASE_URL", "GROVE_CHAT_COMPLETIONS_URL", "GROVE_OPENAI_MODELS",
+              "TAVILY_API_KEY")
 
 
 @pytest.fixture(autouse=True)
@@ -23,4 +24,6 @@ def _offline_env_isolation(monkeypatch):
         # Vazio no ambiente vence o `.env`: a suíte offline não abre conexão com o Langfuse.
         monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
         monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
+        # Idem para a busca web: a chave do `.env` nunca vaza para um teste offline (ADR-005).
+        monkeypatch.setenv("TAVILY_API_KEY", "")
     yield

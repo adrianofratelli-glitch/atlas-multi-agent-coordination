@@ -8,6 +8,7 @@ O que faz, nesta ordem:
      medidos), índices B-tree/únicos/TTL, validadores e índices Search/Vector (autoEmbed voyage-4:
      o embedding é gerado pelo próprio Atlas, não há vetor a recalcular aqui). Também invalida
      cache semântico, curto prazo, decisões, auditoria e casos pausados.
+     Registro de ferramentas externas (`tool_registry`, ADR-005) volta ao padrão.
   2. Probes dos classificadores por embedding (`scope_probes`, `turn_probes`) e seus índices.
   3. Memória que a demo escreveu em cada identidade (mesmo reset do botão da UI).
   4. Escritas operacionais acumuladas pelos ensaios: chamados de suporte, resgates, conversas,
@@ -35,7 +36,10 @@ from app.demo_reset import reset_customer_memory  # noqa: E402
 
 # Coleções que só a demo escreve (nenhuma vem do seed): limpas por inteiro.
 DEMO_WRITES = ("support_tickets", "redemptions", "agent_conversations",
-               "guardrail_candidates", "guardrail_events")
+               "guardrail_candidates", "guardrail_events",
+               # busca web (ADR-005): cache de resultado e auditoria dos ensaios. A cota do mês
+               # (`<brain>.web_search_quota`) NÃO é zerada: ela mede crédito real gasto no provedor.
+               "web_search_cache", "external_calls")
 
 
 async def _orphan_checkpoints(store: DataStore) -> int:
@@ -58,7 +62,10 @@ async def reset(store: DataStore, *, wait_indexes: bool = True) -> list[str]:
     import seed_turn_probes
     from seed import seed
 
+    from seed_tool_registry import seed_tool_registry
+
     lines = [f"seed: {line}" for line in await seed(store, create_indexes=True)]
+    lines.append(await seed_tool_registry(store))  # liga/desliga ao vivo volta ao padrão
     if not store.memory:
         for module in (seed_scope_probes, seed_turn_probes):
             lines.append(f"probes {module.__name__}: +{await module.seed_probes(store)} novos; {await module.create_index(store)}")

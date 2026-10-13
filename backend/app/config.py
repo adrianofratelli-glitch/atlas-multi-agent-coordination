@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     # Warmup automático do cache semântico (ao subir e quando a UI abre); 0 desliga. Menor que o TTL do cache.
     warmup_on_start: bool = True
     warmup_cooldown_minutes: int = 45
+    # Busca web (ADR-005): chave ÚNICA do portfólio, distribuída por `_shared/sync_env.py`. Vazia = ferramenta
+    # não existe (falha fechado), qualquer que seja o `tool_registry`.
+    tavily_api_key: str = ""
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"

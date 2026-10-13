@@ -74,3 +74,16 @@ async def test_state_survives_sigkill_mid_conversation():
     if verdict.skipped:
         pytest.skip(verdict.detail)
     assert verdict.passed, verdict.detail
+
+
+async def test_web_search_timeout_answers_from_mongodb():
+    verdict = await _assert_scenario("web_timeout")
+    assert verdict.elapsed_s < 5
+
+
+async def test_web_search_breaker_stops_calling_the_provider():
+    await _assert_scenario("web_circuit_breaker")
+
+
+async def test_web_search_bad_payload_is_never_passed_on():
+    await _assert_scenario("web_malformed_payload")

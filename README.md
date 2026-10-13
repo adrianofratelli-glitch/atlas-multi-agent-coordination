@@ -39,7 +39,9 @@ The UI is in Brazilian Portuguese (used in customer sessions); documentation and
 | `billing_agent` | Invoice lookup | No |
 | `warranty_agent` | Coverage by category + purchase date | No |
 | `loyalty_agent` | Points, tiers, reward redemption | Yes: points deduction |
-| `logistics_agent` | Carrier, tracking, delivery estimate | Yes: reschedule flag |
+| `logistics_agent` | Carrier, tracking, delivery estimate; carrier delay news when the delivery is overdue | Yes: reschedule flag |
+
+Every agent prompt carries today's date; date math (warranty days left, days past the delivery estimate) is done in Python, never by the model. Web search is not an agent loop: the server decides to search (overdue delivery + the tool enabled for the customer's area in `multiagent_brain.tool_registry`) and builds the query from the shipment document, so customer text never leaves the process. Atlas governs the tool: live on/off per area with one `update_one`, an atomic monthly quota, a 6-hour result cache with TTL and a 30-day audit trail ([ADR-005](docs/adr/ADR-005-busca-web-deterministica-governada-pelo-atlas.md)). Out-of-scope questions are still refused with 0 tokens.
 
 ## Stack
 
@@ -82,6 +84,7 @@ python eval.py <url>            # golden dataset, results in eval_runs
 LIVE=1 pytest tests/test_live.py -q            # ~2 min, essential contracts
 LIVE=1 pytest tests/test_live_random.py -q     # ~4 min, random and out-of-scope questions
 LIVE=1 pytest tests/test_live_scenarios.py -q  # ~10 min, full journey of the 4 customers
+LIVE=1 pytest tests/test_live_web.py -q -s     # web search against real Atlas + LLM + Tavily, isolated *_test databases
 LIVE=1 pytest tests/adversarial -q             # adds real double-click races on the isolated *_test database
 python eval_situations.py                      # ~10 min, 287 LLM-generated situations against the real agent (dev vs holdout); exits 1 if any case misses
 ```
@@ -186,7 +189,7 @@ Set `ENVIRONMENT=production`, `AUTH_REQUIRED=1`, and `DEMO_TOKEN_ISSUANCE_ENABLE
 
 ## Documentation
 
-[Architecture](docs/architecture.md) · [ADR-001: document-oriented coordination](docs/adr/ADR-001-arquitetura-multi-agente.md) · [ADR-002: LLM memory and personal turns outside the cache](docs/adr/ADR-002-memoria-llm-e-turno-pessoal.md) · [ADR-003: two-band guardrail and out of scope](docs/adr/ADR-003-guardrail-em-duas-faixas.md) · [ADR-004: embedding scope and situation-based measurement](docs/adr/ADR-004-escopo-por-embedding-e-medicao-por-situacoes.md) · [Chaos report](docs/chaos-report.md) · [Eval format](eval/FORMAT.md)
+[Architecture](docs/architecture.md) · [ADR-001: document-oriented coordination](docs/adr/ADR-001-arquitetura-multi-agente.md) · [ADR-002: LLM memory and personal turns outside the cache](docs/adr/ADR-002-memoria-llm-e-turno-pessoal.md) · [ADR-003: two-band guardrail and out of scope](docs/adr/ADR-003-guardrail-em-duas-faixas.md) · [ADR-004: embedding scope and situation-based measurement](docs/adr/ADR-004-escopo-por-embedding-e-medicao-por-situacoes.md) · [ADR-005: governed, deterministic web search](docs/adr/ADR-005-busca-web-deterministica-governada-pelo-atlas.md) · [Chaos report](docs/chaos-report.md) · [Eval format](eval/FORMAT.md)
 
 The ADRs and briefing documents are written in Brazilian Portuguese.
 

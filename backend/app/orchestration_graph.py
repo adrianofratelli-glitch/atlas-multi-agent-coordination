@@ -42,6 +42,7 @@ from .guidance import (blocked_reply, build_suggestions, customer_snapshot, gree
                         looks_like_own_pii, meta_reply, out_of_scope_reply, pii_block_reply,
                         thanks_reply)
 from .memory import active_budget, extract_and_store, looks_like_instruction
+from . import web_search
 from .models import ChatResponse, TimelineEvent
 from .router import (RouteDecision, cheap_route, deterministic_orchestrator, detect_fanout,
                       has_catalog_anchor, has_domain_signal, has_weak_signal,
@@ -87,6 +88,8 @@ class TurnState(TypedDict, total=False):
     # fixa aqui — ver backend/agent_graph.py daquela PoV).
     _guardrail_blocked: bool
     _own_pii: bool
+    # Config efetiva da busca web para a área do cliente (tool_registry), ou None = desligada (ADR-005).
+    web_cfg: Optional[dict]
 
 
 def _svc(config):
@@ -115,11 +118,12 @@ async def n_ingest(state: TurnState, config) -> dict:
     masked = mask_pii(state["message"])
     timeline: list = []
 
-    agents, rules, memory, conversation = await asyncio.gather(
+    agents, rules, memory, conversation, web_cfg = await asyncio.gather(
         svc.store.find_many("agent_registry", {"active": True}, brain=True, limit=20),
         svc.store.find_many("routing_rules", {}, brain=True, limit=100),
         svc.store.find_many("customer_memory", {"customer_key": state["customer"]["customer_key"], "active": True}, limit=5),
         svc.store.find_one("agent_conversations", {"conversation_id": conversation_id, "customer_key": state["customer"]["customer_key"]}),
+        web_search.get_config(svc.store, state["customer"]["area"]),
     )
     if requested_conversation_id and conversation is None:
         conversation_id = f"conv-{uuid.uuid4().hex[:12]}"
@@ -165,7 +169,7 @@ async def n_ingest(state: TurnState, config) -> dict:
         "quick_decision": quick_decision, "scope_verdict": scope_verdict,
         "no_domain_signal": no_domain_signal, "suspicious": suspicious,
         "pre_route": pre_route, "canned_route": canned_route,
-        "weak_product_route": weak_product_route, "started": started,
+        "weak_product_route": weak_product_route, "started": started, "web_cfg": web_cfg,
     }
 
 
@@ -419,6 +423,24 @@ async def n_cache_hit(state: TurnState, config) -> dict:
     return {"output": output}
 
 
+async def _confirmed_out_of_scope(store, sentences: list[str]) -> list[str]:
+    """A lista de palavras propõe as frases "alheias"; o embedding (ADR-004) confirma. Só sai como "isso foge" a frase
+    com veredito `out` DECISIVO: continuação curta do mesmo assunto ("quantos dias faltam?", "quando chega?") mede
+    `in`/`unsure` e era anexada como fora de escopo logo depois de a resposta tê-la respondido. Sem veredito real
+    (DEMO_MODE, índice ausente, erro) vale a lista de palavras, como antes."""
+    from . import scope_classifier
+    confirmed = []
+    for sentence in sentences:
+        try:
+            verdict = await scope_classifier.classify(store, sentence)
+        except Exception:  # noqa: BLE001 — classificador nunca derruba o turno
+            verdict = None
+        real = verdict is not None and verdict.get("method") == "vector" and not verdict.get("error")
+        if not real or verdict["scope"] == "out":
+            confirmed.append(sentence)
+    return confirmed
+
+
 async def n_handoff_chain(state: TurnState, config) -> dict:
     """Cadeia de handoff completa (até MAX_HOPS), guardrail de saída, cascata
     de cache e persistência — o caminho caro, idêntico ao `run_turn` original
@@ -464,9 +486,21 @@ async def n_handoff_chain(state: TurnState, config) -> dict:
     current = target
     visit_counts = {current: 1}
     handoff_path = [current]
+    # Taint do turno (ADR-005): depois que um resultado web entrou no turno, nenhum agente que escreve roda — nem por
+    # handoff. A escrita aqui é decidida em Python a partir da mensagem do cliente, então o risco é pequeno; a regra
+    # existe para que nunca dependa disso. O cliente confirma numa nova mensagem, que nasce sem taint.
+    web_tainted = False
     for hop in range(MAX_HOPS):
         runner = RUNNERS.get(current)
         if not runner:
+            break
+        if web_tainted and current in WRITE_EFFECT_AGENTS:
+            await metrics.increment("web.taint_blocked")
+            responses.append("Para eu seguir com a próxima etapa, confirme o pedido numa nova mensagem — neste atendimento "
+                             "usei uma fonte externa (web) e, por segurança, não altero nada no mesmo turno.")
+            timeline.append(TimelineEvent(category="handoff", title="Etapa com escrita adiada: turno usou busca web",
+                                           agent=current, result={"blocked_agent": current, "reason": "web_taint"},
+                                           reason="web_taint"))
             break
         if current in WRITE_EFFECT_AGENTS and hop > 0:
             live_agent = await svc.store.find_one("agent_registry", {"agent_key": current}, brain=True)
@@ -489,6 +523,7 @@ async def n_handoff_chain(state: TurnState, config) -> dict:
             "active_invoice_id": (conversation or {}).get("active_invoice_id"),
             "handoff_path": list(handoff_path), "visit_counts": dict(visit_counts),
             "returning_from": handoff_path[-2] if len(handoff_path) > 1 else None,
+            "web_cfg": state.get("web_cfg"),
         }
         with observability.span("agent", agent=current, conversation_id=conversation_id, hop=hop, intent=decision.intent):
             async def _run_agent(agent_key=current, hint=(history_hint + long_term_hint) if hop == 0 else ""):
@@ -513,6 +548,7 @@ async def n_handoff_chain(state: TurnState, config) -> dict:
         timeline.append(result.event)
         timeline.extend(result.extra_events)
         responses.append(result.response)
+        web_tainted = web_tainted or any(event.op == "external" for event in [result.event, *result.extra_events])
         budget.reserve(current, estimate_tokens(result.response))
         if not result.handoff_to or hop == MAX_HOPS - 1:
             break
@@ -551,7 +587,7 @@ async def n_handoff_chain(state: TurnState, config) -> dict:
         current = destination
 
     response = "\n\n".join(responses) or "Não foi possível concluir o atendimento com segurança."
-    left_out = out_of_scope_sentences(masked)
+    left_out = await _confirmed_out_of_scope(svc.store, out_of_scope_sentences(masked))
     if left_out and responses:
         response += "\n\n" + " ".join(f"Sobre “{sentence}”: isso foge do que eu resolvo por aqui, então segui só com o restante." for sentence in left_out)
     output_guardrail = await check_output(svc.store, response, customer)
@@ -563,7 +599,7 @@ async def n_handoff_chain(state: TurnState, config) -> dict:
     cache_eligible = (
         decision.intent in GLOBAL_CACHE_INTENTS and not state["written_facts"] and not left_out
         and all(event.category != "memory" for event in turn_tail) and not handoff_chain and current == target
-        and all(event.op != "write" for event in turn_tail)
+        and all(event.op not in ("write", "external") for event in turn_tail)
     )
     await cascade_store_turn(svc.store, target=target, area=customer["area"], customer_key=customer["customer_key"],
                               session_id=conversation_id, intent=decision.intent, message=masked, answer=response,

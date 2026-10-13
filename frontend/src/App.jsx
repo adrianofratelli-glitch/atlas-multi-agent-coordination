@@ -69,7 +69,10 @@ function MongoCacheSavings({ run, timeline = [], agentLabels = {} }) {
 }
 
 function Segments({ segments }) {
-  return segments.map((seg, i) => (seg.bold ? <strong key={i}>{seg.text}</strong> : <span key={i}>{seg.text}</span>));
+  return segments.map((seg, i) => {
+    if (seg.href) return <a key={i} href={seg.href} target="_blank" rel="noopener noreferrer">{seg.text}</a>;
+    return seg.bold ? <strong key={i}>{seg.text}</strong> : <span key={i}>{seg.text}</span>;
+  });
 }
 
 // Resposta do modelo: negrito e listas renderizados, sem HTML cru (ver richtext.js).
