@@ -42,13 +42,20 @@ GROUNDING_RULES = (
 )
 
 
+# Relógio só onde o documento tem prazo (linha do tempo do pedido, vencimento, validade, previsão de entrega). Medido em
+# `eval_routing --live`: com o relógio em todos os agentes o turno custava +23% de tokens, quase tudo o modelo comentando
+# a data em respostas que não dependem dela (recomendação, suporte, pontos).
+CLOCK_AGENTS = frozenset({"order_agent", "billing_agent", "warranty_agent", "logistics_agent"})
+
+
 async def llm_synthesize(llm, agent_doc: dict | None, budget, message: str, documents: Any, extra: str = "") -> str | None:
     """Deixa o modelo redigir a resposta em cima do dado JÁ retornado do Mongo — a busca continua 100% determinística
     e segura (ownership, filtros), só a fala final é gerada, o que cobre qualquer forma de perguntar, não só o script."""
     if not llm or not getattr(llm, "client", None) or not agent_doc:
         return None
     # Relógio no bloco DINÂMICO: no estático (GROUNDING_RULES) invalidaria o prompt cache a cada minuto.
-    context = f"{clock_block()}\n{extra}\n\nDocumentos:\n{json.dumps(documents, ensure_ascii=False, default=str)}"
+    clock = f"{clock_block()}\n" if agent_doc.get("agent_key") in CLOCK_AGENTS else ""
+    context = f"{clock}{extra}\n\nDocumentos:\n{json.dumps(documents, ensure_ascii=False, default=str)}"
     text, _ = await llm.complete(agent=agent_doc, user_message=message, dynamic_context=context, budget=budget, static_context=GROUNDING_RULES)
     return text
 

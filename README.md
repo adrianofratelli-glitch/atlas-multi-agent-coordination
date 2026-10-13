@@ -41,7 +41,7 @@ The UI is in Brazilian Portuguese (used in customer sessions); documentation and
 | `loyalty_agent` | Points, tiers, reward redemption | Yes: points deduction |
 | `logistics_agent` | Carrier, tracking, delivery estimate; carrier delay news when the delivery is overdue | Yes: reschedule flag |
 
-Every agent prompt carries today's date; date math (warranty days left, days past the delivery estimate) is done in Python, never by the model. Web search is not an agent loop: the server decides to search (overdue delivery + the tool enabled for the customer's area in `multiagent_brain.tool_registry`) and builds the query from the shipment document, so customer text never leaves the process. Atlas governs the tool: live on/off per area with one `update_one`, an atomic monthly quota, a 6-hour result cache with TTL and a 30-day audit trail ([ADR-005](docs/adr/ADR-005-busca-web-deterministica-governada-pelo-atlas.md)). Out-of-scope questions are still refused with 0 tokens.
+The agents whose documents carry dates (orders, billing, warranty, logistics) get today's date in the prompt; date math (warranty days left, days past the delivery estimate) is done in Python, never by the model. Web search is not an agent loop: the server decides to search (overdue delivery + the tool enabled for the customer's area in `multiagent_brain.tool_registry`) and builds the query from the shipment document, so customer text never leaves the process. Atlas governs the tool: live on/off per area with one `update_one`, an atomic monthly quota, a 6-hour result cache with TTL and a 30-day audit trail ([ADR-005](docs/adr/ADR-005-busca-web-deterministica-governada-pelo-atlas.md)). Out-of-scope questions are still refused with 0 tokens.
 
 ## Stack
 

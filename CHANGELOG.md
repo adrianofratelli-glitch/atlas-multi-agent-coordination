@@ -4,14 +4,14 @@
 
 Clock and governed web search (ADR-005).
 
-- Clock: every agent prompt gets today's date/time (America/Sao_Paulo) in the dynamic context. Date math is Python: warranty expiry by calendar month (it was `months * 30`, so 12 months were 360 days) with `days_left`; shipments get `days_until_delivery`/`delivery_overdue`, so an in-transit order whose forecast expired months ago is no longer presented as on time. Answers citing today's date are never cached.
+- Clock: the agents whose documents carry dates (orders, billing, warranty, logistics; `agents.CLOCK_AGENTS`) get today's date/time (America/Sao_Paulo) in the dynamic context. Date math is Python: warranty expiry by calendar month (it was `months * 30`, so 12 months were 360 days) with `days_left`; shipments get `days_until_delivery`/`delivery_overdue`, so an in-transit order whose forecast expired months ago is no longer presented as on time. Answers citing today's date are never cached.
 - Web search (Tavily) as one more deterministic retrieval source, not an agent loop: `logistics_agent` searches the carrier's public delay news only when the shipment is overdue and `multiagent_brain.tool_registry` enables it for the area; the query is built from the document, never from customer text. Atomic monthly quota (`web_search_quota`, 400), 6 h exact-match result cache (`web_search_cache`), audit with 30-day TTL (`external_calls`). Fails closed without the registry document or the key, and in `DEMO_MODE`. Turn-level taint: no write agent runs after a web result in the same turn.
 - Out-of-scope is unchanged (still 0 tokens, ADR-004).
 - UI: external calls appear in the timeline as their own actor (provider, query, sources, "cache Atlas"); answer links are clickable (http/https only, no innerHTML).
 - Chaos: three web scenarios (provider timeout, breaker, malformed payload).
 - Mixed messages: a sentence is appended as "outside what I handle" only when the embedding scope verdict for it is decisively `out`. A follow-up such as "quantos dias faltam?" (`unsure` by embedding) was appended right after the answer had answered it. Without a real verdict (`DEMO_MODE`) the word list still applies.
 - Sources are cited by the server: if a web-backed answer has no link, the sources are appended (measured live: the model sometimes summarised the sources without citing any).
-- Cost, measured with `eval_routing.py --live` on the same code with and without the clock: 1,355.8 → 1,674.8 tokens/turn (+23%); routing and resolution stay at 100%.
+- Cost, measured with `eval_routing.py --live` with a warm semantic cache: no clock ~1,366 tokens/turn, clock on the date agents ~1,434 (+5%), clock on every agent 1,461 (+7%); routing and resolution stay at 100%. A first reading compared a cold-cache run against a warm one and reported +23%; that gap was the cache.
 - Fix: the in-memory store's `update_one(upsert=True)` overwrote the query's `_id`.
 
 ## 1.2.0 (2026-10-08)

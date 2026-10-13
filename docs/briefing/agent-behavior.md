@@ -175,7 +175,7 @@ Não são "tools" no sentido de tool-calling do LLM (function calling) — são 
 
 ### Relógio e busca web (ADR-005)
 
-- Todo prompt de agente recebe data, hora e fuso (`clock.clock_block`, America/Sao_Paulo) no contexto **dinâmico** de `llm_synthesize`; o estático (`GROUNDING_RULES`) não muda, para não perder o prompt cache.
+- Os agentes cujo documento tem prazo (`agents.CLOCK_AGENTS`: pedidos, cobrança, garantia, logística) recebem data, hora e fuso (`clock.clock_block`, America/Sao_Paulo) no contexto **dinâmico** de `llm_synthesize`; o estático (`GROUNDING_RULES`) não muda, para não perder o prompt cache.
 - Conta de datas é Python: `warranty_agent` calcula `expires_at` por mês de calendário e `days_left`; `logistics_agent` acrescenta `days_until_delivery` e `delivery_overdue` ao documento do envio. O modelo só lê esses campos.
 - **Busca web não é loop de ferramenta.** O `logistics_agent` consulta a web só quando `delivery_overdue` é verdadeiro **e** `multiagent_brain.tool_registry` liga a ferramenta para a área do cliente (`financeiro` fica desligada no seed). A consulta é montada pelo servidor a partir do documento (`"<transportadora> atraso entregas Brasil"`); o texto do cliente nunca sai do processo.
 - O resultado volta entre `<resultados_web_nao_confiaveis>` com a instrução de ignorar comandos, citar a URL e avisar quando a fonte está desatualizada. Prazo e status continuam vindo do MongoDB.

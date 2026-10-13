@@ -357,3 +357,22 @@ async def test_server_appends_sources_when_the_model_forgets_the_url(monkeypatch
     result = await run_logistics_agent(store, "a transportadora do meu pedido PED-1001 está com problema?", ANA,
                                        llm=object(), context={"web_cfg": CFG})
     assert result.response.endswith("Fontes consultadas: https://example.com/noticia")
+
+
+@pytest.mark.parametrize("agent_key,expected", [
+    ("warranty_agent", True), ("logistics_agent", True), ("billing_agent", True), ("order_agent", True),
+    ("product_agent", False), ("support_agent", False), ("loyalty_agent", False),
+])
+async def test_clock_only_reaches_agents_whose_documents_have_dates(agent_key, expected):
+    seen = []
+
+    class CaptureLLM:
+        client = True
+
+        async def complete(self, *, agent, user_message, dynamic_context, budget, static_context=""):
+            seen.append(dynamic_context)
+            return "ok", {}
+
+    await agents.llm_synthesize(CaptureLLM(), {"agent_key": agent_key}, None, "oi", {"x": 1})
+    assert ("13 de outubro de 2026" in seen[0]) is expected
+    assert "13 de outubro" not in agents.GROUNDING_RULES   # nunca no bloco estático (prompt cache)

@@ -74,14 +74,16 @@ cd backend && ../.venv/bin/python eval_routing.py --json hoje.json --compare ont
 |---|---|---|---|---|---|
 | `demo` (offline) | 21 (3 exigem LLM) | 100,0% | 100,0% | 0,125 | 43,5 |
 | `live` (Atlas + LLM, banco `multi_agent_poc_test`) | 24 | 100,0% | 100,0% | 0,125 | 762,6 |
-| `live`, 13/10/2026, agentes em Sonnet, **sem** o relógio no prompt (monkeypatch) | 24 | 100,0% | 100,0% | 0,125 | 1.355,8 |
-| `live`, 13/10/2026, **com** o relógio (ADR-005) | 24 | 100,0% | 100,0% | 0,125 | 1.674,8 |
+| `live`, 13/10/2026, cache frio (1ª rodada após reset), relógio em todos os agentes | 24 | 100,0% | 100,0% | 0,125 | 1.674,8 |
+| `live`, 13/10/2026, cache quente, **sem** relógio (3 rodadas) | 24 | 100,0% | 100,0% | 0,125 | 1.355,8 · 1.367,1 · 1.365,8 |
+| `live`, 13/10/2026, cache quente, relógio só nos agentes de data (ADR-005, 2 rodadas) | 24 | 100,0% | 100,0% | 0,125 | 1.433,8 · 1.434,5 |
+| `live`, 13/10/2026, cache quente, relógio em todos os agentes | 24 | 100,0% | 100,0% | 0,125 | 1.461,0 |
 
 De 22/09 para 13/10 os sete agentes Haiku passaram a Sonnet (`59813ef`), que escreve respostas mais longas: daí o
-salto de 762,6 para 1.355,8 sem mudar rota. O relógio no prompt custa mais **319 tokens/turno (+23%)**, medido no
-mesmo código com e sem o bloco — bem mais que as ~60 do próprio bloco, porque o modelo passa a comentar datas
-("o vencimento é anterior a hoje…", "a previsão já passou há 86 dias…"). Uma rodada de cada lado: a variância do
-LLM entre rodadas não está medida.
+salto de 762,6 para ~1.360 sem mudar rota. **Compare só rodadas com o cache no mesmo estado:** a primeira rodada
+depois de um reset do banco de teste encontra o cache semântico frio e custa ~230–300 tokens/turno a mais (foi o que
+uma primeira leitura atribuiu, errado, ao relógio: "+23%"). Com o cache quente, o relógio custa +68 tokens/turno
+(+5%) nos agentes de data e +95 (+7%) em todos; restringir economiza ~27/turno. Variância entre rodadas quentes: ±1.
 
 Três casos (`route-011`, `route-018`, `route-024`) só têm veredito com LLM: dependem do
 orquestrador ou do classificador do guardrail, que em DEMO_MODE não existem.

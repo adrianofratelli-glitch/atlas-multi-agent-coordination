@@ -33,7 +33,8 @@ transportadoras (Correios, Loggi, Jadlog) são reais.
 
 ### 1. Relógio e contas de calendário em Python (`app/clock.py`)
 
-- Data, hora e fuso (America/Sao_Paulo) no contexto **dinâmico** de todo agente (`agents.llm_synthesize`), nunca
+- Data, hora e fuso (America/Sao_Paulo) no contexto **dinâmico** dos agentes cujo documento tem prazo
+  (`agents.CLOCK_AGENTS`: pedidos, cobrança, garantia, logística — produto, suporte e fidelidade não recebem), nunca
   no `GROUNDING_RULES` estático — que perderia o prompt cache. Uma linha curta (o orçamento por agente é 4.000
   tokens e já causou 429).
 - Toda distância entre datas chega pronta no documento: `warranty_agent` → `expires_at` por mês de calendário e
@@ -118,7 +119,8 @@ jogo") saem `out` com margem ≥ 0,077. Sem veredito real, vale a lista, como an
   auditoria por agregação.
 - O backend passa a depender de saída para a internet só nesse caminho; rede fora vira resposta só com o MongoDB.
 - Custo de busca: no máximo uma por transportadora a cada 6 h por consulta normalizada.
-- **Custo de tokens do relógio (medido):** `eval_routing.py --live`, 24 casos, mesmo código com e sem o bloco:
-  1.355,8 → 1.674,8 tokens/turno (+319, +23%), rota e resolução em 100% nos dois. O bloco tem ~60 tokens; o resto
-  é o modelo comentando datas na resposta. Uma rodada de cada lado. Turno com busca web fica em ~2.400–2.700 dos
-  4.000 de orçamento do `logistics_agent`.
+- **Custo de tokens do relógio (medido):** `eval_routing.py --live`, 24 casos, cache semântico quente nas três
+  configurações: sem relógio ~1.366 tokens/turno (3 rodadas, ±6); relógio só nos agentes de data ~1.434 (+5%, 2
+  rodadas); relógio em todos 1.461 (+7%). Rota e resolução em 100% em todas. Uma primeira leitura comparou uma
+  rodada de cache frio (logo após o reset do banco de teste) com uma de cache quente e chegou a "+23%": o salto era
+  do cache, não do relógio. Turno com busca web fica em ~2.400–2.800 dos 4.000 de orçamento do `logistics_agent`.
