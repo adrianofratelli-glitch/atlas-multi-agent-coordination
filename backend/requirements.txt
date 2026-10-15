@@ -1,11 +1,9 @@
 fastapi>=0.115,<1
 uvicorn[standard]>=0.34,<1
-# pymongo preso em <4.18 por langgraph-checkpoint-mongodb 0.5.0 (pymongo<4.18).
-# Risco aceito: CVE-2026-88029/96747/96748/96749 (fix 4.18.1/4.18.2) ate nova
-# release do checkpointer. Sem este teto o pip nao resolve (ResolutionImpossible).
-pymongo>=4.17,<4.18
+# Checkpointer 0.5.1 permite o driver com correções de segurança.
+pymongo>=4.18.3,<5
 anthropic>=0.49,<1
-PyJWT>=2.10,<3
+PyJWT>=2.15,<3
 pydantic-settings>=2.8,<3
 python-multipart>=0.0.20,<1
 httpx>=0.28,<1
@@ -16,4 +14,7 @@ langfuse>=2.0.0,<3
 # Orquestração do turno multi-agente (app/orchestration_graph.py) — StateGraph
 # com checkpoint nativo em MongoDB (thread_id = conversation_id).
 langgraph>=1,<2
-langgraph-checkpoint-mongodb>=0.5,<1
+langgraph-checkpoint-mongodb>=0.5.1,<1
+
+# Pisos de segurança para dependências transitivas.
+urllib3>=2.8,<3

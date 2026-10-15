@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Atualiza dependências compatíveis e pisos de segurança; alinha metadados de versão entre aplicação e frontend.
+
 ## 1.3.0 (2026-10-13)
 
 Clock and governed web search (ADR-005).

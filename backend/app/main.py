@@ -90,7 +90,7 @@ async def lifespan(app: FastAPI):
     await store.close()
 
 
-app = FastAPI(title="Multi-Agent PoV", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Multi-Agent PoV", version="1.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,

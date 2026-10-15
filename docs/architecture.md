@@ -76,6 +76,6 @@ Esse mesmo turno vira uma trace Langfuse opcional (`backend/app/langfuse_client.
 
 `find` aparece só em point lookup por índice (`order_id`, `invoice_id`, `customer_key`) e leitura de configuração no `multiagent_brain` — trocar isso por busca textual seria erro de modelagem. O diferencial não é evitar `find`: é o mesmo cluster ser data plane e coordination plane, sem fila, workflow engine ou vector DB ao lado.
 
-Detalhe completo, com os pipelines colados, em [`docs/briefing/02-mongodb.md`](prompts/02-mongodb.md).
+Detalhe completo, com os pipelines colados, em [`docs/briefing/queries.md`](briefing/queries.md).
 - Cache entre sessões: documentos `scope=customer` sempre filtram `customer_key`.
 - Cache global: limitado a catálogo/KB sem memória personalizada, handoff ou escrita; garantia, pedido, cobrança, fidelidade e logística nunca são compartilhados entre clientes.
