@@ -61,3 +61,61 @@ contagem das 40 coleções da demo antes/depois (`DIFF_DEMO`).
 | Caos LIVE `kb_*` | 5/5 |
 | Regressão: pytest 548 · ruff · npm 12 · LIVE 7/7 (agora no `*_test`) · caos 19/19 · `eval_routing --live` 100%/100% · singleagent offline verde | verde |
 | `DIFF_DEMO` | **vazio** |
+
+## B2 — `$rerank` por agente
+
+### Iteração 1 — 2026-10-16
+
+| Etapa | Resultado |
+|---|---|
+| KB: `$rankFusion` + `$rerank` lite pool 20/40/80, `rerank-3-lite` | MRR 0,978–0,983 vs 0,983 sem rerank; +185 ms → **desligado** |
+| Catálogo (`eval_product_rerank.py`, 12 consultas) | recall@1 0,417 → 0,833, MRR 0,639 → 0,917, +~180 ms; igual nos dois modelos → **ligado** com `rerank-2.5-lite` |
+| Turno (`eval_routing --live`, rerank do produto off/on) | p95 16,3 → 16,2 s; rota 100%, resolução 100% nos dois |
+| `tests/test_product_rerank.py` | 6 OK |
+| Caos LIVE `kb_rerank_rejected` | PASS |
+
+- **Falhou (medição):** a 1ª rodada "on" começou com o código que gravava a time series no caminho
+  crítico (B3 em edição) — viés. **Correção:** gravação em background no Atlas; as duas rodadas
+  refeitas com o mesmo código.
+
+## B3 — time series para a economia de LLM
+
+### Iteração 1 — 2026-10-16
+
+| Etapa | Resultado |
+|---|---|
+| `tests/test_usage_ts.py` (forma, fuzz hostil, janela, DEMO_MODE, fail-open, custo desconhecido) | 8 OK |
+| LIVE: `llm_usage_ts` criada no `*_test` (`timeseries`, minutes, TTL 90 d) e alimentada pelo `eval_routing` | 28 medições; custo por agente/hora e cache (3 HITs, 625 tokens) numa agregação |
+
+- **Risco evitado:** um insert antes da criação faria o MongoDB criar uma coleção COMUM com o mesmo
+  nome; o `open_test_store`/seed criam a time series antes de qualquer turno e
+  `ensure_collection` avisa se encontrar a comum.
+
+## B4 — change stream de `agent_handoffs`
+
+### Iteração 1 — 2026-10-16
+
+| Etapa | Resultado |
+|---|---|
+| `tests/test_handoff_stream.py` (pipeline no servidor, retomada, resync, escopo, limites, chave inválida) | 6 OK |
+| Caos LIVE: 18 assinantes de 6 clientes · cursor fechado no meio · ChangeStreamHistoryLost | 3/3 (0 vazamentos; retomou com token sem duplicar; `resync`) |
+
+- **Achado:** o `$match` antigo trazia handoffs sem dono de qualquer cliente para o app filtrar; os
+  dois escritores gravam `customer_key`, o ramo saiu.
+- **Achado:** um cliente que cai antes do primeiro byte nunca roda o `finally` do gerador; a
+  liberação do teto de assinantes também vai numa `BackgroundTask`, idempotente.
+
+## B6 — experiência da tela de Chat (pedido do usuário)
+
+### Iteração 1 — 2026-10-16
+
+- **Medido antes (1440×900, Chromium headless):** 18,8 s sem nenhum evento, depois 10 de uma vez
+  com atraso escalonado de 65 ms por item; página de 938 px vazia e 1.218 px depois do turno.
+- **Mudança:** `POST /api/chat/stream` (cada `TimelineEvent` publicado ao nascer, via ContextVar no
+  `model_post_init`, sem tocar nos nós do grafo; fallback para `/api/chat`), timeline anexando ao
+  vivo com item "em andamento" e auto-scroll, sem atraso escalonado; Chat em uma tela.
+- **Falhou no meio:** desconto de altura errado (o `main` tem 42 + 72 px de padding) → 985 px.
+  Corrigido com padding próprio na tela de Chat.
+- **Medido depois:** 900 px antes e depois do turno; eventos aos 2,6 · 2,8 · 4,3 · 4,6 · 9,2 · 9,4 ·
+  15,2 · 15,7 s. `tests/test_live_events.py` 4 OK (inclui turnos simultâneos sem misturar streams).
+- `DIFF_DEMO` vazio na sessão de UI (app nos bancos de teste).

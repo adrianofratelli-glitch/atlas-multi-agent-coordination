@@ -66,7 +66,9 @@ Esse mesmo turno vira uma trace Langfuse opcional (`backend/app/langfuse_client.
 ## Retrieval
 
 - Catálogo: `autoEmbed` com `voyage-4`, `indexingMethod: flat` e filtros `active`, `category`, `price`.
-- Base de suporte: ranking vetorial e BM25 combinados com RRF.
+- Base de suporte: um `$rankFusion` no servidor (perna vetorial + BM25 `lucene.portuguese` com sinônimos `kb_sinonimos` e fuzzy em cláusulas separadas, filtro opcional de categoria nas duas pernas), config viva em `agent_registry.support_agent.retrieval.fusion`, `scoreDetails` por artigo na timeline; cascata `rankFusion` → `rankFusion_basico` → `rrf_aplicacao` → `vetor` → `rrf_local` (ADR-006). `$rerank` por agente no registry: ligado no catálogo, desligado no KB (ADR-007).
+- Economia de LLM: time series `llm_usage_ts` (meta agente/modelo/área, granularity minutes, TTL 90 dias), agregada por janela em `/api/economics` (ADR-008).
+- Feed de handoffs: change stream com filtro de dono no `$match` do servidor, resume token por assinante, `resync`, teto de assinantes (ADR-009). Turno ao vivo em `POST /api/chat/stream`.
 - Memória longa: um documento por fato, com `customer_key + active` no índice vetorial.
 - Cache curto: índice vetorial particionado por `session_id + customer_key + agent`.
 

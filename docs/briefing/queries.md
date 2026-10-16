@@ -280,3 +280,33 @@ Referenciados por nome nas pipelines acima — não são criados por `create_sta
 | `turn_probes_vs` | Vector Search (Automated Embedding) | `<brain>.turn_probes` | `phrase` | `turn_classifier.py` — criado por `seed_turn_probes.py`, fora do `seed.py` |
 | `kb_autoembed_v1` | Vector Search (Automated Embedding) | `kb_articles` | `content` | `retrieval.py` |
 | `kb_lexical_v1` | Atlas Search (BM25, analyzer português) | `kb_articles` | `title`, `content` | `retrieval.py` |
+
+## KB com sinônimos e config viva (2026-10, `retrieval.build_kb_rank_fusion_pipeline`)
+
+Perna lexical (dentro do `$rankFusion`), três cláusulas `should` (fuzzy e synonyms não podem estar
+na mesma cláusula, doc do operador `text`):
+
+```js
+{ $search: { index: "kb_lexical_v1", compound: {
+    should: [
+      { text: { query: q, path: "title", score: { boost: { value: 2 } } } },
+      { text: { query: q, path: "content" } },
+      { text: { query: q, path: ["title", "content"], synonyms: "kb_sinonimos", matchCriteria: "any" } },
+      { text: { query: q, path: ["title", "content"], fuzzy: { maxEdits: 1 }, score: { boost: { value: 0.5 } } } }
+    ],
+    minimumShouldMatch: 1,
+    filter: [ { equals: { path: "category", value: "<categoria>" } } ]   // opcional
+} } }, { $limit: <per_branch_limit> }
+```
+
+Depois da fusão: `$limit pool` → `$addFields {fusion_score: $meta score, score_details: $meta scoreDetails}`
+→ (rerank ligado) `$set` de guarda → `$rerank {model, path: [title, content], numDocsToRerank}` →
+`$limit 4` → `$project` com `rrf_score: "$fusion_score"`. Pesos/profundidade vêm de
+`agent_registry.support_agent.retrieval.fusion`.
+
+Catálogo com `$rerank` (`agents.build_product_rerank_pipeline`): `$vectorSearch` (filtro de preço/
+categoria) → `$rerank` sobre `name` + `search_text` dos 8 candidatos → `relevance = rerank_score` →
+mesma ponderação 0,55/0,30/0,15.
+
+Economia (`usage_ts.usage_pipeline`): `llm_usage_ts` → `$match at >= agora - N h` → `$facet` com
+`$group` por `{$dateTrunc: {date: "$at", unit: "hour"}}` + `meta.agent` e o resumo do cache.

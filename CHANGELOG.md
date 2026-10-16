@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+Atlas capabilities as data (ADR-006 to ADR-010).
+
+- Support RAG: `$rankFusion` tuned live from `agent_registry.support_agent.retrieval.fusion`, Atlas Search synonyms (`kb_synonyms`, `lucene.portuguese`) and fuzzy as separate BM25 clauses, optional server-side category filter, `scoreDetails` per article in the timeline, fallback cascade down to local RRF; works with or without `pov-shared` (`app/atlas_compat.py`). MRR 0.944 → 0.983 on `eval/kb_retrieval.json`.
+- `$rerank` per agent from the registry: on for `product_agent` (`rerank-2.5-lite`, recall@1 0.417 → 0.833, turn p95 unchanged), off for `support_agent` (no measured gain). Rejected stage = no-op + timeline event.
+- LLM economics in the `llm_usage_ts` time series and `GET /api/economics`; `/api/metrics` gains `llm_usage`.
+- Handoff Change Stream: server-only owner filter (legacy ownerless branch removed), resume token, backoff, `resync` SSE event, cursor closed on disconnect, subscriber caps.
+- `POST /api/chat/stream`: timeline events streamed live; the chat view fits one screen.
+- Fix: `tests/test_live.py`, `test_live_random.py` and `test_live_scenarios.py` ran against the demo database and left LangGraph checkpoints behind; they now use the isolated `*_test` databases.
+- `$rankFusion` requires MongoDB 8.0+ (comments said 8.1+).
+
 - Atualiza dependências compatíveis e pisos de segurança; alinha metadados de versão entre aplicação e frontend.
 
 ## 1.3.0 (2026-10-13)

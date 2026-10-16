@@ -81,3 +81,14 @@ cd frontend && npm install && npm run dev   # porta 5191
 ```
 
 O cache **se aquece sozinho**: o backend dispara ao subir e o frontend dispara de novo ao abrir a página (`POST /api/warmup`, execução única por vez, no máximo uma a cada 45 min). `python backend/warmup.py <url>` só força e acompanha o estado; `WARMUP_ON_START=0` desliga.
+
+## Turno ao vivo e tela única (2026-10)
+
+- `Enviar turno` chama `POST /api/chat/stream`: cada `TimelineEvent` chega em SSE quando nasce no
+  servidor (`event: timeline`) e aparece na coluna Execução na hora; o `event: result` final é o
+  mesmo payload do `/api/chat` e substitui a timeline. Sem stream (404/rede), cai para `/api/chat`.
+- A tela de Chat cabe na viewport (≥ 1100×700): a página não rola; chat e timeline rolam por
+  dentro e a timeline segue o último evento enquanto o turno roda.
+- Evento `hybridSearch` do `support_agent` mostra "Por que estes artigos" (rank e peso de cada perna
+  do `$rankFusion`); `$rerank` do catálogo aparece como evento próprio, com modelo e tempo.
+- O feed ao vivo de handoffs aceita `event: resync` (o servidor perdeu o histórico do change stream).

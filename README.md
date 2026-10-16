@@ -126,6 +126,16 @@ conversation           spans errors tokens cost_usd  slowest
 conv-8b3ca34a297a         20     2       0  0.00000  agent [order_agent] 3ms  ERROR in tool.orders.find_many
 ```
 
+## Atlas capabilities as data (2026-10)
+
+- **Support RAG in one server-side `$rankFusion`**, tuned live from the agent's own registry document (`agent_registry.support_agent.retrieval.fusion`: weights, depth per leg, fuzzy, synonyms; read on every hop, no restart, no extra round-trip). The BM25 leg uses Atlas Search **synonyms** (`kb_synonyms`, `lucene.portuguese`: refund/chargeback, defect/damaged, headset/earphone…) and fuzzy as separate clauses, and an optional category filter on both legs. `scoreDetails` explains every article in the timeline ("why these articles"). Measured on 33 synthetic queries: MRR 0.944 → 0.983, recall@3 0.963 → 1.0, same p50 ([ADR-006](docs/adr/ADR-006-kb-rankfusion-config-viva-sinonimos.md)).
+- **`$rerank` per agent**, as registry data and decided by measurement ([ADR-007](docs/adr/ADR-007-rerank-por-agente-public-preview.md)): on for the product catalog (`rerank-2.5-lite`, recall@1 0.417 → 0.833, turn p95 unchanged), off for the knowledge base (no gain, +185 ms). `rerank-3*` models are Public Preview and labeled as such. A rejected stage is a no-op with a timeline event.
+- **LLM economics in a time series collection** (`llm_usage_ts`, granularity `minutes`, 90-day TTL): one measurement per LLM call and per cache HIT; `GET /api/economics?hours=N` aggregates cost per agent per hour and cache savings on the server ([ADR-008](docs/adr/ADR-008-economia-llm-em-time-series.md)).
+- **Hardened handoff Change Stream**: owner filter only in the server-side `$match`, per-subscriber resume token and backoff, `resync` event on history loss, cursor closed on disconnect, subscriber caps ([ADR-009](docs/adr/ADR-009-endurecimento-change-stream-handoffs.md)).
+- **Live turn in the UI**: `POST /api/chat/stream` sends each timeline event as it happens; the chat view fits one screen with internal scrolling. Why customer memory is not LangGraph's store: [ADR-010](docs/adr/ADR-010-por-que-nao-mongodbstore-langgraph.md).
+
+Every capability fails open: without `pov-shared`, in `DEMO_MODE`, or with a stage rejected by the server, the turn takes the previous path and the event says which one ran. `python backend/scripts/capabilities.py` checks the cluster (read-only).
+
 ## Flags (all opt-in; with none of them, behavior is unchanged)
 
 > `TRACE_SINK` and `GUARDRAILS_EDGE` rely on optional helper packages that are not part of this repository. Without them both features fail open and are no-ops.
@@ -142,6 +152,7 @@ conv-8b3ca34a297a         20     2       0  0.00000  agent [order_agent] 3ms  ER
 | `MONGODB_TEST_DB` / `MONGODB_TEST_BRAIN_DB` | `<database>_test` | isolated databases used by scripts that write real data |
 | `ALLOW_DEMO_DB_WRITE` | `0` | escape hatch: lets those scripts write to the demo database |
 | `GUARDRAILS_EDGE` | `0` | `mask_pii` in logs and `validate_output` (`max_repairs=0`) on the response |
+| `MAX_HANDOFF_SUBSCRIBERS` / `MAX_HANDOFF_SUBSCRIBERS_PER_CUSTOMER` | `100` / `5` | caps on live handoff feeds (each one is a change stream cursor); above them, HTTP 429 |
 | `CHAOS` | `0` | enables the fault-injection points (`CHAOS_SCENARIO`, `CHAOS_TARGET`, `CHAOS_PHASE`, `CHAOS_STATUS`, `CHAOS_DELAY`, `CHAOS_COUNT`) |
 
 The LLM gateway (`app/llm.py`) already had retry with backoff, model fallback, and a per-endpoint circuit breaker, and these remain on by default.
