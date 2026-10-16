@@ -131,6 +131,12 @@ async def ensure_seeded(store: DataStore, *, wait_indexes: bool = True) -> list[
         messages += [f"seed: {line}" for line in await seed(store, create_indexes=True)]
     else:
         messages.append(f"seed: já havia {customers} clientes no banco de teste")
+    # Capabilities 2026-10 (sinônimos, config do retrieval, índice lexical com sinônimos): replica
+    # no banco de teste mesmo quando ele já existia; tudo idempotente.
+    from seed import ensure_kb_lexical_index, seed_kb_retrieval
+
+    messages += await seed_kb_retrieval(store)
+    messages.append(await ensure_kb_lexical_index(store))
 
     demo = get_settings()
     if store.client is not None and demo.mongodb_brain_db != store.settings.mongodb_brain_db:

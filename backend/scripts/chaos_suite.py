@@ -398,6 +398,119 @@ async def scenario_web_malformed_payload() -> Verdict:
                    f"cache={len(cached)}", elapsed)
 
 
+# ---------------------------------------------------------------- KB (2026-10): $rankFusion/$rerank/sinônimos sob falha, LIVE no *_test
+
+
+class _ServerSays(Exception):
+    """Recusa do servidor com `code`, como o OperationFailure do driver."""
+
+    def __init__(self, msg, code):
+        super().__init__(msg)
+        self.code = code
+
+
+class _MaxTime(Exception):
+    code = 50
+
+
+def _kb_wrap(store, fail):
+    """Embrulha o aggregate REAL: `fail(pipeline)` devolve a exceção a levantar (ou None)."""
+    real_aggregate, real_collection = store.aggregate, store._collection
+
+    async def aggregate(name, pipeline, **kw):
+        exc = fail(pipeline)
+        if exc:
+            raise exc
+        return await real_aggregate(name, pipeline, **kw)
+
+    def collection(name, brain=False):
+        coll = real_collection(name, brain)
+        if name != "kb_articles":
+            return coll
+
+        class _C:
+            async def aggregate(self, pipeline, *a, **k):
+                exc = fail(pipeline)
+                if exc:
+                    raise exc
+                return await coll.aggregate(pipeline, *a, **k)
+        return _C()
+    store.aggregate, store._collection = aggregate, collection
+
+
+def _is_fusion(p):
+    return "$rankFusion" in p[0]
+
+
+def _has_synonyms(p):
+    return "synonyms" in str(p)
+
+
+async def _kb_live(name, assertion, fail, expect, *, agent_doc=None, then=None):
+    if os.getenv("LIVE", "").strip() not in {"1", "true", "yes"} and os.getenv("CHAOS_KB_LIVE") != "1":
+        return Verdict(name, assertion, False, "LIVE=1 ausente — cenário não roda contra Atlas", skipped=True)
+    from app import retrieval
+    from app.agents import _local_rank
+    from scripts.isolation import open_test_store
+
+    store, _ = await open_test_store(what=f"chaos_suite {name}", seed_if_empty=False, wait_indexes=False)
+    started = perf_counter()
+    try:
+        retrieval._capabilities.reset()
+        _kb_wrap(store, fail)
+        found = await retrieval.search_kb_explained(store, "fone sem áudio", agent_doc=agent_doc,
+                                                    local_rank=_local_rank)
+        # resiliente = caminho de fallback esperado e o artigo certo ainda entre os 4 que vão ao
+        # agente (no fallback a ORDEM pode piorar: a perna vetorial sozinha põe KB-002 na frente)
+        ok = found.strategy in expect and "KB-001" in [a["article_id"] for a in found.articles]
+        detail = f"estratégia={found.strategy} topo={found.articles[0]['article_id'] if found.articles else None} fallbacks={found.fallbacks}"
+        if then is not None:
+            store.aggregate, store._collection = DataStore.aggregate.__get__(store), DataStore._collection.__get__(store)
+            again = await retrieval.search_kb_explained(store, "fone sem áudio", agent_doc=agent_doc,
+                                                        local_rank=_local_rank)
+            ok = ok and again.strategy == then
+            detail += f" | sem falha depois: {again.strategy}"
+        return Verdict(name, assertion, ok, detail, perf_counter() - started)
+    finally:
+        await store.close()
+
+
+async def scenario_kb_synonyms_unavailable() -> Verdict:
+    return await _kb_live("kb_synonyms_unavailable",
+                          "mapeamento de sinônimos recusado → $rankFusion sem sinônimos/fuzzy, artigo certo mantido",
+                          lambda p: _ServerSays("synonym mapping 'kb_sinonimos' not found", 8)
+                          if _is_fusion(p) and _has_synonyms(p) else None, {"rankFusion_basico"})
+
+
+async def scenario_kb_fusion_rejected() -> Verdict:
+    return await _kb_live("kb_fusion_rejected",
+                          "$rankFusion recusado → duas pernas em paralelo + RRF na aplicação; recusa lembrada",
+                          lambda p: _ServerSays("Unrecognized pipeline stage name: '$rankFusion'", 40324)
+                          if _is_fusion(p) else None, {"rrf_aplicacao"}, then="rrf_aplicacao")
+
+
+async def scenario_kb_lexical_building() -> Verdict:
+    return await _kb_live("kb_lexical_building",
+                          "índice lexical em BUILDING (fusão e $search falham) → só a perna vetorial",
+                          lambda p: _ServerSays("search index kb_lexical_v1 is not READY", 8)
+                          if _is_fusion(p) or "$search" in p[0] else None, {"vetor"})
+
+
+async def scenario_kb_rerank_rejected() -> Verdict:
+    return await _kb_live("kb_rerank_rejected",
+                          "$rerank recusado → no-op: fusão sem rerank e evento 'rerank indisponível'",
+                          lambda p: _ServerSays("Native Reranking is not enabled", 2)
+                          if any("$rerank" in st for st in p) else None, {"rerank_indisponivel"},
+                          agent_doc={"retrieval": {"rerank": {"enabled": True, "model": "rerank-2.5-lite"}}})
+
+
+async def scenario_kb_max_time() -> Verdict:
+    return await _kb_live("kb_max_time",
+                          "maxTimeMS estourado na fusão → fallback neste turno SEM marcar o $rankFusion como indisponível",
+                          lambda p: _MaxTime("operation exceeded time limit") if _is_fusion(p) else None,
+                          {"rrf_aplicacao"}, then="rankFusion")
+
+
 SCENARIOS = {
     "tool_timeout": scenario_tool_timeout,
     "agent_hang": scenario_agent_hang,
@@ -413,6 +526,11 @@ SCENARIOS = {
     "web_timeout": scenario_web_timeout,
     "web_circuit_breaker": scenario_web_circuit_breaker,
     "web_malformed_payload": scenario_web_malformed_payload,
+    "kb_synonyms_unavailable": scenario_kb_synonyms_unavailable,
+    "kb_fusion_rejected": scenario_kb_fusion_rejected,
+    "kb_lexical_building": scenario_kb_lexical_building,
+    "kb_rerank_rejected": scenario_kb_rerank_rejected,
+    "kb_max_time": scenario_kb_max_time,
 }
 
 

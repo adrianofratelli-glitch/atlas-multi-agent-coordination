@@ -1,4 +1,5 @@
 import QueryDetails from './QueryDetails.jsx';
+import { explainArticles } from '../kbExplain.js';
 
 const CATEGORY_LABELS = {
   agent: 'agente', memory: 'memória', guardrail: 'guardrail', cache: 'cache', handoff: 'coordenação', fanout: 'paralelo',
@@ -18,6 +19,36 @@ function ExternalCall({ event }) {
         <ul>{sources.map((url) => <li key={url}><a href={url} target="_blank" rel="noopener noreferrer">{url}</a></li>)}</ul>
       )}
     </div>
+  );
+}
+
+// "Por que este artigo": rank e peso de cada perna do $rankFusion (scoreDetails) e o $rerank.
+function WhyArticles({ event }) {
+  const ex = explainArticles(event);
+  if (!ex) return null;
+  return (
+    <details className="why-articles">
+      <summary>Por que estes artigos{ex.strategy ? ` · ${ex.strategy}` : ''}</summary>
+      {ex.fallbacks.length > 0 && <p className="why-fallbacks">{ex.fallbacks.join(' · ')}</p>}
+      <ol>
+        {ex.rows.map((row) => (
+          <li key={row.id}>
+            <span className="why-title"><code>{row.id}</code> {row.title}</span>
+            {row.available ? (
+              <span className="why-legs">
+                {row.legs.map((leg) => (
+                  <span key={leg.name} className="why-leg">
+                    {leg.name} <b>{leg.rank ? `#${leg.rank}` : 'fora'}</b>
+                    <i style={{ transform: `scaleX(${leg.share})` }} />
+                  </span>
+                ))}
+                {row.rerank !== null && <span className="why-leg">rerank <b>{row.rerank.toFixed(2)}</b></span>}
+              </span>
+            ) : <span className="why-legs">detalhe indisponível</span>}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 
@@ -52,6 +83,7 @@ export default function Timeline({ events }) {
             {event.op === 'external' ? <ExternalCall event={event} />
               : event.collection && <div className="mongo-operation"><span>MongoDB</span><code>{event.collection}</code></div>}
             {event.reason && <p className="handoff-reason">“{event.reason}”</p>}
+            <WhyArticles event={event} />
             <div className="event-data">
               {event.result !== undefined && <details open={event.category === 'handoff'}><summary>Resultado</summary><JsonBlock value={event.result} /></details>}
             </div>

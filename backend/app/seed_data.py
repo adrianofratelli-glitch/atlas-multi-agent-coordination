@@ -114,7 +114,13 @@ AGENTS = [
     {"agent_key": "orchestrator", "label": "Orquestrador", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Classifique, roteie e consolide. Nunca responda diretamente ao cliente.", "allowed_tools": ["route", "consolidate"], "max_turn_tokens": 2600, "max_output_tokens": 700, "active": True},
     {"agent_key": "order_agent", "label": "Pedidos", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Resolva status, troca e reembolso somente para pedidos do titular autenticado.", "allowed_tools": ["read_order", "update_order_status"], "max_turn_tokens": 4000, "max_output_tokens": 1000, "active": True},
     {"agent_key": "product_agent", "label": "Produtos", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Recomende produtos relevantes usando somente resultados do catálogo.", "allowed_tools": ["vector_search_products"], "max_turn_tokens": 4500, "max_output_tokens": 1400, "active": True},
-    {"agent_key": "support_agent", "label": "Suporte", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Resolva dúvidas técnicas com evidência da base de conhecimento e transfira quando necessário.", "allowed_tools": ["hybrid_search_kb", "handoff"], "max_turn_tokens": 4500, "max_output_tokens": 1400, "active": True},
+    {"agent_key": "support_agent", "label": "Suporte", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Resolva dúvidas técnicas com evidência da base de conhecimento e transfira quando necessário.", "allowed_tools": ["hybrid_search_kb", "handoff"], "max_turn_tokens": 4500, "max_output_tokens": 1400, "active": True,
+     # Retrieval do KB como dado, relido a cada hop: fusão ($rankFusion, ADR-006) e $rerank
+     # (Public Preview nos rerank-3*, medido e DESLIGADO, ADR-007).
+     "retrieval": {"fusion": {"weights": {"vector": 1.0, "lexical": 1.0}, "per_branch_limit": 20,
+                              "num_candidates": 100, "fuzzy_max_edits": 1, "synonyms": True,
+                              "score_details": True},
+                   "rerank": {"enabled": False, "model": "rerank-2.5-lite", "pool": 20, "top_n": 4}}},
     {"agent_key": "billing_agent", "label": "Cobrança", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Explique faturas do titular autenticado em modo somente leitura.", "allowed_tools": ["read_invoice"], "max_turn_tokens": 4000, "max_output_tokens": 900, "active": True},
     {"agent_key": "warranty_agent", "label": "Garantia", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Verifique cobertura de garantia por categoria e data de compra do pedido do titular autenticado, em modo somente leitura.", "allowed_tools": ["read_warranty_policy", "read_order"], "max_turn_tokens": 4000, "max_output_tokens": 900, "active": True},
     {"agent_key": "loyalty_agent", "label": "Fidelidade", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Informe saldo de pontos, tier e benefícios do programa de fidelidade do titular autenticado, em modo somente leitura.", "allowed_tools": ["read_loyalty_account"], "max_turn_tokens": 4000, "max_output_tokens": 900, "active": True},
@@ -521,6 +527,43 @@ EVAL_CASES = [
     for scenario in DEMO_SCENARIOS
     if not scenario.get("demo_kind")
 ]
+
+
+# Sinônimos de domínio do Atlas Search (2026-10, índice kb_lexical_v1, mapeamento kb_sinonimos).
+# `equivalent` = qualquer termo casa os outros. Nenhuma entrada carrega stopword ("de", "sem",
+# "do"): com analyzer de idioma a doc manda tirar a stopword da entrada, senão ela não casa.
+# `_id` estável: o seed regrava sem duplicar. Documento inválido IMPEDE o índice de ser criado,
+# por isso `kb_synonym_problems` valida antes de gravar (tests/test_kb_synonyms.py).
+KB_SYNONYMS = [
+    {"_id": "syn-reembolso", "mappingType": "equivalent", "synonyms": ["reembolso", "estorno", "ressarcimento"]},
+    {"_id": "syn-devolucao", "mappingType": "equivalent", "synonyms": ["devolução", "devolver", "devolvido"]},
+    {"_id": "syn-troca", "mappingType": "equivalent", "synonyms": ["troca", "trocar", "substituição", "substituir"]},
+    {"_id": "syn-defeito", "mappingType": "equivalent", "synonyms": ["defeito", "avaria", "avariado", "quebrado", "danificado", "defeituoso"]},
+    {"_id": "syn-fone", "mappingType": "equivalent", "synonyms": ["fone", "headset", "headphone", "auricular"]},
+    {"_id": "syn-relogio", "mappingType": "equivalent", "synonyms": ["relógio", "smartwatch"]},
+    {"_id": "syn-webcam", "mappingType": "equivalent", "synonyms": ["webcam", "câmera"]},
+    {"_id": "syn-carregamento", "mappingType": "equivalent", "synonyms": ["carregamento", "carregador", "carregar", "recarga"]},
+    {"_id": "syn-lento", "mappingType": "equivalent", "synonyms": ["lento", "devagar", "demora", "demorado"]},
+    {"_id": "syn-rastrear", "mappingType": "equivalent", "synonyms": ["acompanhar", "rastrear", "rastreio", "rastreamento"]},
+    {"_id": "syn-entrega", "mappingType": "equivalent", "synonyms": ["entrega", "encomenda", "remessa"]},
+    {"_id": "syn-mudo", "mappingType": "equivalent", "synonyms": ["mudo", "silencioso"]},
+    {"_id": "syn-pareamento", "mappingType": "equivalent", "synonyms": ["pareamento", "parear", "sincronizar", "sincroniza"]},
+]
+
+def kb_synonym_problems(docs: list[dict]) -> list[str]:
+    """Documento de sinônimo inválido derruba o índice inteiro (doc do Atlas Search)."""
+    problems = []
+    for doc in docs:
+        kind = doc.get("mappingType")
+        syn = doc.get("synonyms")
+        if kind not in ("equivalent", "explicit"):
+            problems.append(f"{doc.get('_id')}: mappingType inválido")
+        if not isinstance(syn, list) or not syn or not all(isinstance(t, str) and t.strip() for t in syn):
+            problems.append(f"{doc.get('_id')}: synonyms vazio ou não-string")
+        if kind == "explicit" and not (isinstance(doc.get("input"), list) and doc["input"]
+                                       and all(isinstance(t, str) and t.strip() for t in doc["input"])):
+            problems.append(f"{doc.get('_id')}: explicit sem input")
+    return problems
 
 
 def seed_documents() -> dict[str, list[dict]]:

@@ -1,4 +1,3 @@
-import asyncio
 import json
 import re
 from dataclasses import dataclass
@@ -16,8 +15,7 @@ from .decisions import build_decision_doc, record_decision
 from .replacement import apply_replacement, assess_replacement, block_for_quality_review
 from .graph import (build_order_chain_pipeline, summarize_order_chain,
                      traverse_order_chain_in_memory)
-from .retrieval import (build_kb_lexical_pipeline, build_kb_rank_fusion_pipeline,
-                        build_kb_vector_pipeline, reciprocal_rank_fusion)
+from .retrieval import KbSearch, search_kb_explained
 from .router import CATEGORY_KEYWORDS, normalize
 from . import web_search
 
@@ -771,42 +769,63 @@ async def run_product_agent(store: DataStore, message: str, customer: dict, llm=
     return AgentResult(final_response, event, extra_events=events[1:])
 
 
-async def search_kb(store: DataStore, message: str) -> tuple[list[dict], str]:
+async def search_kb(store: DataStore, message: str, agent_doc: dict | None = None,
+                    category: str | None = None) -> tuple[list[dict], str]:
     """Devolve (artigos, estratégia). A estratégia vira o título do evento de timeline —
     a demo mostra explicitamente se a fusão rodou no servidor ou na aplicação."""
-    if not store.memory:
-        try:
-            # Caminho preferido: $rankFusion funde vetorial + BM25 dentro do MongoDB (8.1+).
-            articles = await store.aggregate("kb_articles", build_kb_rank_fusion_pipeline(message, limit=4))
-            if articles:
-                return articles, "rankFusion"
-        except Exception:
-            # Servidor sem $rankFusion (ou índice indisponível): cai para as duas pernas
-            # separadas + RRF na aplicação, que é o comportamento anterior.
-            pass
-        try:
-            async def execute(pipeline: list[dict]) -> list[dict]:
-                cursor = await store._collection("kb_articles").aggregate(pipeline)
-                return await cursor.to_list(None)
-            vector, lexical = await asyncio.gather(
-                execute(build_kb_vector_pipeline(message, limit=10)),
-                execute(build_kb_lexical_pipeline(message, limit=10)),
-            )
-            for item in vector + lexical:
-                item["_id"] = item.get("article_id")
-            return reciprocal_rank_fusion([vector, lexical], limit=4), "rrf_aplicacao"
-        except Exception:
-            pass
-    articles = await store.find_many("kb_articles", {}, limit=100)
-    lexical = _local_rank(articles, message, ("title", "content"))
-    semantic = _local_rank(articles, message, ("category", "title"))
-    return reciprocal_rank_fusion([lexical, semantic], limit=4), "rrf_local"
+    found = await search_kb_explained(store, message, agent_doc=agent_doc, category=category,
+                                      local_rank=_local_rank)
+    return found.articles, found.strategy
+
+
+_KB_TITLES = {
+    "rankFusion": "RAG híbrido: $rankFusion server-side",
+    "rankFusion+rerank": "RAG híbrido: $rankFusion + $rerank server-side",
+    "rerank_indisponivel": "RAG híbrido: $rankFusion server-side ($rerank indisponível)",
+    "rankFusion_basico": "RAG híbrido: $rankFusion sem sinônimos/fuzzy",
+    "vetor": "RAG: só a perna vetorial (lexical indisponível)",
+}
+_SCORE_FIELDS = ("rrf_score", "score_details", "rerank_score", "fusion_score")
+
+
+def _kb_events(found: KbSearch, message: str, clean: list[dict], synthesized: bool,
+               started: float) -> tuple[TimelineEvent, list[TimelineEvent]]:
+    """Evento do RAG com "por que este artigo" (scoreDetails) e o custo do $rerank à parte."""
+    why = {item["article_id"]: item for item in found.why()}
+    result = [{**doc, "por_que": why.get(doc.get("article_id"), {}).get("explain"),
+               "rerank_score": why.get(doc.get("article_id"), {}).get("rerank_score")}
+              for doc in clean[:3]]
+    title = _KB_TITLES.get(found.strategy, "RAG híbrido com RRF na aplicação") + (" + modelo" if synthesized else "")
+    event = TimelineEvent(category="agent", title=title, agent="support_agent", collection="kb_articles",
+                          op="hybridSearch",
+                          filter={"query": message, "strategy": found.strategy, "config": found.config,
+                                  "fallbacks": found.fallbacks, "config_warnings": found.warnings,
+                                  "search_ms": found.search_ms},
+                          result=result, duration_ms=(perf_counter() - started) * 1000)
+    extra: list[TimelineEvent] = []
+    status = found.rerank.get("status")
+    if found.rerank.get("enabled") and status == "ran":
+        extra.append(TimelineEvent(category="agent", title=f"$rerank (Public Preview nos rerank-3*) · {found.rerank['model']}",
+                                   agent="support_agent", collection="kb_articles", op="hybridSearch",
+                                   filter={"model": found.rerank["model"], "pool": found.rerank["pool"],
+                                           "preview": found.rerank["preview"]},
+                                   result={"reordenou": [d.get("article_id") for d in clean[:KB_LIMIT_FOR_EVENT]]},
+                                   duration_ms=found.rerank_ms or 0))
+    elif found.rerank.get("enabled"):
+        extra.append(TimelineEvent(category="agent", title="$rerank indisponível — ordem da fusão mantida",
+                                   agent="support_agent", collection="kb_articles", op="hybridSearch",
+                                   filter={"model": found.rerank["model"]}, result={"fallbacks": found.fallbacks}))
+    return event, extra
+
+
+KB_LIMIT_FOR_EVENT = 4
 
 
 async def run_support_agent(store: DataStore, message: str, customer: dict, llm=None, budget=None, agent_doc=None, scope_hint: str = "", context: dict | None = None) -> AgentResult:
     started = perf_counter()
-    articles, retrieval_strategy = await search_kb(store, message)
-    clean = [public_document(item) for item in articles]
+    found = await search_kb_explained(store, message, agent_doc=agent_doc, local_rank=_local_rank)
+    clean = [{k: v for k, v in public_document(item).items() if k not in _SCORE_FIELDS}
+             for item in found.articles]
     evidence = clean[0] if clean else None
     response = (
         f"A orientação da base é: {evidence['content']}" if evidence else
@@ -824,9 +843,8 @@ async def run_support_agent(store: DataStore, message: str, customer: dict, llm=
         "Se nenhum artigo cobrir o problema relatado, diga que vai escalar/orientar de forma genérica em vez de inventar um passo a passo."
     )
     synthesized = await llm_synthesize(llm, agent_doc, budget, message, clean, handoff_note)
-    event = TimelineEvent(category="agent", title=("RAG híbrido: $rankFusion server-side" if retrieval_strategy == "rankFusion" else "RAG híbrido com RRF na aplicação") + (" + modelo" if synthesized else ""), agent="support_agent", collection="kb_articles", op="hybridSearch", filter={"query": message, "strategy": retrieval_strategy}, result=clean[:3], duration_ms=(perf_counter() - started) * 1000)
+    event, extra_events = _kb_events(found, message, clean, bool(synthesized), started)
     final_response = synthesized or response
-    extra_events: list[TimelineEvent] = []
 
     wants_escalation = any(term in normalize(message) for term in ("abrir chamado", "falar com humano", "escalar", "atendente", "chamado"))
     if wants_escalation:

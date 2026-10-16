@@ -22,4 +22,7 @@ def test_rank_fusion_pipeline_fuses_both_legs_server_side():
     # Cada perna ranqueia mais fundo que o limite final para a fusão ter o que reordenar.
     assert legs["vector"][0]["$vectorSearch"]["limit"] >= 20
     assert pipeline[-2] == {"$limit": 4}
-    assert pipeline[-1]["$project"]["rrf_score"] == {"$meta": "score"}
+    # o score da fusão é copiado antes de um eventual $rerank (que substitui $meta: "score")
+    assert {"$addFields": {"fusion_score": {"$meta": "score"},
+                           "score_details": {"$meta": "scoreDetails"}}} in pipeline
+    assert pipeline[-1]["$project"]["rrf_score"] == "$fusion_score"

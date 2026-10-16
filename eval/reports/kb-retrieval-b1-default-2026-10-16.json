@@ -1,0 +1,637 @@
+{
+  "summary": {
+    "label": "b1-default",
+    "strategy_forced": null,
+    "rerank": null,
+    "config": null,
+    "database": "multi_agent_poc_test",
+    "cases": 30,
+    "recall_at_1": 0.967,
+    "recall_at_3": 1.0,
+    "mrr": 0.983,
+    "latency_ms": {
+      "p50": 453.2,
+      "p95": 566.8,
+      "mean": 464.4
+    },
+    "strategies": [
+      "rankFusion"
+    ],
+    "by_kind": {
+      "category": {
+        "cases": 3,
+        "recall_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0
+      },
+      "paraphrase": {
+        "cases": 8,
+        "recall_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0
+      },
+      "synonym": {
+        "cases": 12,
+        "recall_at_1": 0.917,
+        "recall_at_3": 1.0,
+        "mrr": 0.958
+      },
+      "typo": {
+        "cases": 7,
+        "recall_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "mrr": 1.0
+      }
+    },
+    "violations": 0,
+    "at": "2026-10-16T21:46:40+00:00"
+  },
+  "violations": [],
+  "rows": [
+    {
+      "id": "kb-001",
+      "kind": "synonym",
+      "query": "como peço meu estorno?",
+      "expected": [
+        "KB-011"
+      ],
+      "returned": [
+        "KB-011",
+        "KB-003",
+        "KB-010",
+        "KB-008"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 443.7,
+      "problems": []
+    },
+    {
+      "id": "kb-002",
+      "kind": "synonym",
+      "query": "quero a devolução do dinheiro, quanto demora?",
+      "expected": [
+        "KB-011"
+      ],
+      "returned": [
+        "KB-009",
+        "KB-011",
+        "KB-003",
+        "KB-012"
+      ],
+      "strategy": "rankFusion",
+      "rank": 2,
+      "ms": 452.2,
+      "problems": []
+    },
+    {
+      "id": "kb-003",
+      "kind": "synonym",
+      "query": "quanto tempo leva o reembolso?",
+      "expected": [
+        "KB-011"
+      ],
+      "returned": [
+        "KB-011",
+        "KB-003",
+        "KB-012",
+        "KB-010"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 444.4,
+      "problems": []
+    },
+    {
+      "id": "kb-004",
+      "kind": "synonym",
+      "query": "posso devolver um produto que chegou quebrado?",
+      "expected": [
+        "KB-003"
+      ],
+      "returned": [
+        "KB-003",
+        "KB-012",
+        "KB-011",
+        "KB-010"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 455.0,
+      "problems": []
+    },
+    {
+      "id": "kb-005",
+      "kind": "synonym",
+      "query": "substituição de item com defeito",
+      "expected": [
+        "KB-003"
+      ],
+      "returned": [
+        "KB-003",
+        "KB-012",
+        "KB-010",
+        "KB-011"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 445.0,
+      "problems": []
+    },
+    {
+      "id": "kb-006",
+      "kind": "synonym",
+      "query": "o produto veio avariado",
+      "expected": [
+        "KB-003"
+      ],
+      "returned": [
+        "KB-003",
+        "KB-012",
+        "KB-010",
+        "KB-011"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 566.8,
+      "problems": []
+    },
+    {
+      "id": "kb-007",
+      "kind": "synonym",
+      "query": "como rastrear minha encomenda?",
+      "expected": [
+        "KB-010"
+      ],
+      "returned": [
+        "KB-010",
+        "KB-003",
+        "KB-008",
+        "KB-011"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 451.9,
+      "problems": []
+    },
+    {
+      "id": "kb-008",
+      "kind": "synonym",
+      "query": "meu headset ficou mudo",
+      "expected": [
+        "KB-001"
+      ],
+      "returned": [
+        "KB-001",
+        "KB-002",
+        "KB-004",
+        "KB-006"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 474.0,
+      "problems": []
+    },
+    {
+      "id": "kb-009",
+      "kind": "synonym",
+      "query": "smartwatch não pareia",
+      "expected": [
+        "KB-008"
+      ],
+      "returned": [
+        "KB-008",
+        "KB-001",
+        "KB-005",
+        "KB-002"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 469.2,
+      "problems": []
+    },
+    {
+      "id": "kb-010",
+      "kind": "synonym",
+      "query": "tela preta no monitor",
+      "expected": [
+        "KB-006"
+      ],
+      "returned": [
+        "KB-006",
+        "KB-005",
+        "KB-009",
+        "KB-007"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 451.3,
+      "problems": []
+    },
+    {
+      "id": "kb-011",
+      "kind": "synonym",
+      "query": "a câmera não aparece no computador",
+      "expected": [
+        "KB-007"
+      ],
+      "returned": [
+        "KB-007",
+        "KB-004",
+        "KB-006",
+        "KB-005"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 460.9,
+      "problems": []
+    },
+    {
+      "id": "kb-012",
+      "kind": "synonym",
+      "query": "o carregador demora muito",
+      "expected": [
+        "KB-009"
+      ],
+      "returned": [
+        "KB-009",
+        "KB-007",
+        "KB-010",
+        "KB-006"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 460.4,
+      "problems": []
+    },
+    {
+      "id": "kb-013",
+      "kind": "paraphrase",
+      "query": "meu fone não sai som nenhum",
+      "expected": [
+        "KB-001"
+      ],
+      "returned": [
+        "KB-001",
+        "KB-002",
+        "KB-006",
+        "KB-004"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 452.3,
+      "problems": []
+    },
+    {
+      "id": "kb-014",
+      "kind": "paraphrase",
+      "query": "só um lado do fone funciona",
+      "expected": [
+        "KB-002"
+      ],
+      "returned": [
+        "KB-002",
+        "KB-001",
+        "KB-006",
+        "KB-004"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 458.7,
+      "problems": []
+    },
+    {
+      "id": "kb-015",
+      "kind": "paraphrase",
+      "query": "o teclado sem fio não funciona",
+      "expected": [
+        "KB-004"
+      ],
+      "returned": [
+        "KB-004",
+        "KB-001",
+        "KB-005",
+        "KB-006"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 453.2,
+      "problems": []
+    },
+    {
+      "id": "kb-016",
+      "kind": "paraphrase",
+      "query": "o ponteiro do mouse fica pulando",
+      "expected": [
+        "KB-005"
+      ],
+      "returned": [
+        "KB-005",
+        "KB-004",
+        "KB-007",
+        "KB-001"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 559.7,
+      "problems": []
+    },
+    {
+      "id": "kb-017",
+      "kind": "paraphrase",
+      "query": "o relógio não conecta no celular",
+      "expected": [
+        "KB-008"
+      ],
+      "returned": [
+        "KB-008",
+        "KB-004",
+        "KB-007",
+        "KB-001"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 451.5,
+      "problems": []
+    },
+    {
+      "id": "kb-018",
+      "kind": "paraphrase",
+      "query": "a bateria carrega devagar",
+      "expected": [
+        "KB-009"
+      ],
+      "returned": [
+        "KB-009",
+        "KB-001",
+        "KB-006",
+        "KB-008"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 451.1,
+      "problems": []
+    },
+    {
+      "id": "kb-019",
+      "kind": "paraphrase",
+      "query": "onde está o meu pedido?",
+      "expected": [
+        "KB-010"
+      ],
+      "returned": [
+        "KB-010",
+        "KB-003",
+        "KB-011",
+        "KB-012"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 465.7,
+      "problems": []
+    },
+    {
+      "id": "kb-020",
+      "kind": "paraphrase",
+      "query": "a garantia cobre defeito de fábrica?",
+      "expected": [
+        "KB-012"
+      ],
+      "returned": [
+        "KB-012",
+        "KB-003",
+        "KB-002",
+        "KB-011"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 573.2,
+      "problems": []
+    },
+    {
+      "id": "kb-021",
+      "kind": "typo",
+      "query": "fone sem audio",
+      "expected": [
+        "KB-001"
+      ],
+      "returned": [
+        "KB-001",
+        "KB-002",
+        "KB-008",
+        "KB-006"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 440.2,
+      "problems": []
+    },
+    {
+      "id": "kb-022",
+      "kind": "typo",
+      "query": "teclado nao conceta",
+      "expected": [
+        "KB-004"
+      ],
+      "returned": [
+        "KB-004",
+        "KB-007",
+        "KB-006",
+        "KB-001"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 452.6,
+      "problems": []
+    },
+    {
+      "id": "kb-023",
+      "kind": "typo",
+      "query": "mouze com cursor instavel",
+      "expected": [
+        "KB-005"
+      ],
+      "returned": [
+        "KB-005",
+        "KB-004",
+        "KB-007",
+        "KB-006"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 567.3,
+      "problems": []
+    },
+    {
+      "id": "kb-024",
+      "kind": "typo",
+      "query": "monitor sem imagen",
+      "expected": [
+        "KB-006"
+      ],
+      "returned": [
+        "KB-006",
+        "KB-005",
+        "KB-007",
+        "KB-009"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 440.3,
+      "problems": []
+    },
+    {
+      "id": "kb-025",
+      "kind": "typo",
+      "query": "webcan nao reconhecida",
+      "expected": [
+        "KB-007"
+      ],
+      "returned": [
+        "KB-007",
+        "KB-006",
+        "KB-004",
+        "KB-005"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 453.0,
+      "problems": []
+    },
+    {
+      "id": "kb-026",
+      "kind": "typo",
+      "query": "garantai dos produtos",
+      "expected": [
+        "KB-012"
+      ],
+      "returned": [
+        "KB-012",
+        "KB-003",
+        "KB-010",
+        "KB-009"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 584.7,
+      "problems": []
+    },
+    {
+      "id": "kb-027",
+      "kind": "typo",
+      "query": "prazo de rembolso",
+      "expected": [
+        "KB-011"
+      ],
+      "returned": [
+        "KB-011",
+        "KB-012",
+        "KB-003",
+        "KB-010"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 450.6,
+      "problems": []
+    },
+    {
+      "id": "kb-028",
+      "kind": "category",
+      "query": "não funciona direito",
+      "expected": [
+        "KB-006",
+        "KB-007"
+      ],
+      "returned": [
+        "KB-007",
+        "KB-006"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 441.7,
+      "problems": []
+    },
+    {
+      "id": "kb-029",
+      "kind": "category",
+      "query": "como funciona o prazo?",
+      "expected": [
+        "KB-003",
+        "KB-011"
+      ],
+      "returned": [
+        "KB-011",
+        "KB-003"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 445.2,
+      "problems": []
+    },
+    {
+      "id": "kb-030",
+      "kind": "category",
+      "query": "não conecta",
+      "expected": [
+        "KB-004",
+        "KB-005"
+      ],
+      "returned": [
+        "KB-004",
+        "KB-005"
+      ],
+      "strategy": "rankFusion",
+      "rank": 1,
+      "ms": 449.4,
+      "problems": []
+    },
+    {
+      "id": "kb-031",
+      "kind": "no_match",
+      "query": "qual é a capital da França?",
+      "expected": [],
+      "returned": [
+        "KB-007",
+        "KB-010",
+        "KB-008",
+        "KB-003"
+      ],
+      "strategy": "rankFusion",
+      "rank": null,
+      "ms": 563.2,
+      "problems": []
+    },
+    {
+      "id": "kb-032",
+      "kind": "no_match",
+      "query": "receita de bolo de cenoura",
+      "expected": [],
+      "returned": [
+        "KB-003",
+        "KB-009",
+        "KB-010",
+        "KB-012"
+      ],
+      "strategy": "rankFusion",
+      "rank": null,
+      "ms": 448.9,
+      "problems": []
+    },
+    {
+      "id": "kb-033",
+      "kind": "no_match",
+      "query": "XYZ-9999",
+      "expected": [],
+      "returned": [
+        "KB-010",
+        "KB-006",
+        "KB-003",
+        "KB-005"
+      ],
+      "strategy": "rankFusion",
+      "rank": null,
+      "ms": 442.8,
+      "problems": []
+    }
+  ]
+}

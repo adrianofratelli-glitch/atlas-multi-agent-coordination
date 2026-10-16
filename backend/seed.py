@@ -14,7 +14,9 @@ from app.seed_data import (  # noqa: E402
     AGENTS,
     DEMO_SCENARIOS,
     GUARDRAIL_POLICIES,
+    KB_SYNONYMS,
     ROUTING_RULES,
+    kb_synonym_problems,
     seed_documents,
 )
 
@@ -66,6 +68,8 @@ async def seed(store: DataStore, *, create_indexes: bool = True) -> list[str]:
         for document in documents:
             await store.replace_one(collection, {key: document[key]}, document, upsert=True)
         messages.append(f"{collection}: {len(documents)} documentos")
+
+    messages.extend(await seed_kb_retrieval(store))
 
     for agent in AGENTS:
         await store.replace_one(
@@ -120,6 +124,53 @@ PRODUCTS_VECTOR_INDEX_DEFINITION = {
 }
 
 
+async def seed_kb_retrieval(store: DataStore) -> list[str]:
+    """Sinônimos do KB, gravados ANTES do índice que os referencia."""
+    problems = kb_synonym_problems(KB_SYNONYMS)
+    if problems:  # documento inválido impediria o índice kb_lexical_v1 inteiro
+        raise SystemExit(f"[seed] sinônimos inválidos: {problems}")
+    for doc in KB_SYNONYMS:
+        await store.replace_one("kb_synonyms", {"_id": doc["_id"]}, doc, upsert=True)
+    # Bloco `retrieval` do registry onde ainda não existe (banco já semeado): não sobrescreve
+    # um ajuste feito ao vivo; o reset completo regrava o agente inteiro de qualquer forma.
+    for agent in AGENTS:
+        if "retrieval" in agent:
+            await store.update_one("agent_registry",
+                                   {"agent_key": agent["agent_key"], "retrieval": {"$exists": False}},
+                                   {"$set": {"retrieval": agent["retrieval"]}}, brain=True)
+    return [f"kb_synonyms: {len(KB_SYNONYMS)} mapeamentos", "agent_registry.retrieval: garantido"]
+
+
+# Índice lexical do KB com o mapeamento de sinônimos: mesmo analyzer do campo (doc do Atlas Search).
+KB_LEXICAL_INDEX_DEFINITION = {
+    "mappings": {"dynamic": False, "fields": {
+        "title": {"type": "string", "analyzer": "lucene.portuguese"},
+        "content": {"type": "string", "analyzer": "lucene.portuguese"},
+        "category": {"type": "token"}}},
+    "synonyms": [{"name": "kb_sinonimos", "analyzer": "lucene.portuguese",
+                  "source": {"collection": "kb_synonyms"}}],
+}
+
+
+async def ensure_kb_lexical_index(store: DataStore) -> str:
+    """Só o índice lexical do KB (sinônimos): o isolamento chama isto em banco já semeado,
+    sem reenviar os índices vetoriais (que não mudaram)."""
+    if store.memory:
+        return "kb_lexical_v1: ignorado em DEMO_MODE"
+    coll = store._collection("kb_articles")
+    cursor = await coll.list_search_indexes()
+    rows = {item["name"]: item for item in await cursor.to_list(None)}
+    current = (rows.get("kb_lexical_v1") or {}).get("latestDefinition") or {}
+    if current.get("synonyms") == KB_LEXICAL_INDEX_DEFINITION["synonyms"]:
+        return "kb_lexical_v1: sinônimos já definidos"
+    if "kb_lexical_v1" in rows:
+        await coll.update_search_index("kb_lexical_v1", KB_LEXICAL_INDEX_DEFINITION)
+    else:
+        await coll.create_search_index(SearchIndexModel(name="kb_lexical_v1",
+                                                        definition=KB_LEXICAL_INDEX_DEFINITION))
+    return "kb_lexical_v1: sinônimos solicitados (rebuild assíncrono)"
+
+
 async def create_search_indexes(store: DataStore) -> list[str]:
     if store.memory:
         return ["índices Search/Vector: ignorados em DEMO_MODE"]
@@ -149,7 +200,7 @@ async def create_search_indexes(store: DataStore) -> list[str]:
             "kb_articles",
             SearchIndexModel(
                 name="kb_lexical_v1",
-                definition={"mappings": {"dynamic": False, "fields": {"title": {"type": "string", "analyzer": "lucene.portuguese"}, "content": {"type": "string", "analyzer": "lucene.portuguese"}, "category": {"type": "token"}}}},
+                definition=KB_LEXICAL_INDEX_DEFINITION,
             ),
         ),
         (
