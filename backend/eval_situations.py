@@ -21,7 +21,6 @@ from pathlib import Path
 os.environ.setdefault("LANGFUSE_PUBLIC_KEY", "")
 os.environ["LANGFUSE_PUBLIC_KEY"] = os.environ["LANGFUSE_SECRET_KEY"] = ""
 
-from app.config import get_settings  # noqa: E402
 from app.database import DataStore  # noqa: E402
 from app.llm import LLMGateway  # noqa: E402
 from app.orchestration import OrchestrationService  # noqa: E402
@@ -76,7 +75,11 @@ async def run(categories: list[str] | None, concurrency: int) -> list[dict]:
     cases = json.loads(DATA.read_text(encoding="utf-8"))
     if categories:
         cases = [c for c in cases if c["category"] in categories or any(c["category"].startswith(x) for x in categories)]
-    settings = get_settings().model_copy(update={"demo_mode": False})
+    # Banco de TESTE isolado (2026-10-16): a bateria roda centenas de turnos reais; no banco da
+    # demo ela deixava langgraph_checkpoints órfãos. O isolamento copia probes e configs medidas,
+    # então o caminho de embedding medido é o mesmo da demo.
+    from scripts.isolation import guard, test_settings
+    settings = guard(test_settings(demo_mode=False), what="eval_situations")
     store = DataStore(settings)
     await store.connect()
     if store.memory:
@@ -101,6 +104,11 @@ async def run(categories: list[str] | None, concurrency: int) -> list[dict]:
         await asyncio.gather(*[one(c) for c in cases])
     finally:
         db = store.client[settings.mongodb_db]
+        threads = [f"{key}:{c['conversation_id']}" for c in
+                   await db["agent_conversations"].find({"customer_key": key}, {"conversation_id": 1}).to_list(None)]
+        if threads:
+            await db["langgraph_checkpoints"].delete_many({"thread_id": {"$in": threads}})
+            await db["langgraph_checkpoint_writes"].delete_many({"thread_id": {"$in": threads}})
         for name in await db.list_collection_names():
             await db[name].delete_many({"customer_key": key})
         await db["guardrail_denylist"].delete_many({"source": "semantic_llm", "learned_at": {"$gte": started}})
