@@ -1,0 +1,93 @@
+{
+  "name": "product-retrieval",
+  "version": 1,
+  "synthetic": true,
+  "generated_by": "Claude Opus 5.5, 2026-10-16, a partir de app/seed_data.py:PRODUCTS",
+  "limitation": "20 SKUs com search_text genérico; mede a busca do catálogo (top-4 entregue ao product_agent), não a recomendação final.",
+  "cases": [
+    {
+      "id": "pr-001",
+      "query": "quero um teclado mecânico",
+      "expected": [
+        "SKU-007"
+      ]
+    },
+    {
+      "id": "pr-002",
+      "query": "caixa de som grande e potente",
+      "expected": [
+        "SKU-005"
+      ]
+    },
+    {
+      "id": "pr-003",
+      "query": "webcam 4k para reuniões",
+      "expected": [
+        "SKU-013"
+      ]
+    },
+    {
+      "id": "pr-004",
+      "query": "ssd externo de 1 tera",
+      "expected": [
+        "SKU-019"
+      ]
+    },
+    {
+      "id": "pr-005",
+      "query": "mochila para carregar notebook",
+      "expected": [
+        "SKU-020"
+      ]
+    },
+    {
+      "id": "pr-006",
+      "query": "hub usb com várias portas",
+      "expected": [
+        "SKU-018"
+      ]
+    },
+    {
+      "id": "pr-007",
+      "query": "carregador portátil pequeno",
+      "expected": [
+        "SKU-017"
+      ]
+    },
+    {
+      "id": "pr-008",
+      "query": "monitor de 27 polegadas",
+      "expected": [
+        "SKU-011"
+      ]
+    },
+    {
+      "id": "pr-009",
+      "query": "fone profissional de estúdio",
+      "expected": [
+        "SKU-003"
+      ]
+    },
+    {
+      "id": "pr-010",
+      "query": "smartwatch mais completo para esportes",
+      "expected": [
+        "SKU-015"
+      ]
+    },
+    {
+      "id": "pr-011",
+      "query": "caixinha de som compacta",
+      "expected": [
+        "SKU-004"
+      ]
+    },
+    {
+      "id": "pr-012",
+      "query": "mouse mais básico e barato",
+      "expected": [
+        "SKU-008"
+      ]
+    }
+  ]
+}

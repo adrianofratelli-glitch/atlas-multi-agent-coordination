@@ -683,19 +683,63 @@ def build_product_pipeline(message: str, max_price: float | None = None, categor
     ]
 
 
-async def search_products(store: DataStore, message: str, max_price: float | None = None, category: str | None = None) -> list[dict]:
+def build_product_rerank_pipeline(message: str, max_price: float | None, category: str | None,
+                                  rerank: dict) -> list[dict]:
+    """Mesma busca e MESMA ponderação de negócio, com o score do $rerank no lugar da relevância
+    vetorial. O $rerank recebe os 8 candidatos do $vectorSearch (já filtrados por preço/categoria
+    no servidor) e roda depois dele; ADR-007."""
+    from .atlas_compat import RerankConfig, build_rerank_stages
+
+    base = build_product_pipeline(message, max_price, category)
+    stages = build_rerank_stages(message, ["name", "search_text"],
+                                 RerankConfig(enabled=True, model=rerank["model"], pool=8, top_n=8))[:3]
+    rest = [{"$addFields": {"relevance": "$rerank_score"}}
+            if st == {"$addFields": {"relevance": {"$meta": "vectorSearchScore"}}} else st for st in base[1:]]
+    return [base[0], *stages, *rest]
+
+
+async def search_products_ranked(store: DataStore, message: str, max_price: float | None = None,
+                                 category: str | None = None, agent_doc: dict | None = None) -> tuple[list[dict], dict]:
+    """(produtos, rerank_info). `$rerank` só se `agent_registry.product_agent.retrieval.rerank`
+    estiver ligado; recusa do servidor = no-op (pipeline sem rerank) e fica lembrada 5 min."""
+    from .retrieval import _capabilities, rerank_config
+
+    rr, _ = rerank_config(agent_doc)
+    info = {"enabled": rr["enabled"], "model": rr["model"], "status": "off", "ms": None,
+            "preview": rr["model"].startswith("rerank-3")}
     if not store.memory:
+        if rr["enabled"] and _capabilities.usable("rerank_products"):
+            started = perf_counter()
+            try:
+                cursor = await store._collection("products_catalog").aggregate(
+                    build_product_rerank_pipeline(message, max_price, category, rr))
+                items = await cursor.to_list(None)
+                info.update(status="ran", ms=round((perf_counter() - started) * 1000, 1))
+                _capabilities.record_success("rerank_products")
+                return items, info
+            except Exception as exc:  # noqa: BLE001 — $rerank recusado → pipeline sem rerank
+                _capabilities.record_failure("rerank_products", exc)
+                info["status"] = "unavailable"
+        elif rr["enabled"]:
+            info["status"] = "unavailable"
         try:
             cursor = await store._collection("products_catalog").aggregate(build_product_pipeline(message, max_price, category))
-            return await cursor.to_list(None)
+            return await cursor.to_list(None), info
         except Exception:
             pass
+    elif rr["enabled"]:
+        info["status"] = "unavailable"
     products = await store.find_many("products_catalog", {"active": True}, limit=100)
     if category:
         products = [item for item in products if item["category"] == category]
     if max_price is not None:
         products = [item for item in products if item["price"] <= max_price]
-    return [public_document(item) for item in _local_rank(products, message, ("name", "category", "search_text"))[:4]]
+    return [public_document(item) for item in _local_rank(products, message, ("name", "category", "search_text"))[:4]], info
+
+
+async def search_products(store: DataStore, message: str, max_price: float | None = None, category: str | None = None) -> list[dict]:
+    products, _ = await search_products_ranked(store, message, max_price, category)
+    return products
 
 
 async def run_product_agent(store: DataStore, message: str, customer: dict, llm=None, budget=None, agent_doc=None, scope_hint: str = "", context: dict | None = None) -> AgentResult:
@@ -708,7 +752,7 @@ async def run_product_agent(store: DataStore, message: str, customer: dict, llm=
     # Limite duro: o teto da memória, ou um teto dito na mensagem que seja igual/mais estrito que ele. Só um teto
     # explícito MAIS FOLGADO que o da memória (o cliente pedindo, agora, algo mais caro) pode ser relaxado.
     hard_ceiling = budget_brl is not None and max_price is not None and max_price <= budget_brl
-    products = await search_products(store, message, max_price, category)
+    products, rerank_info = await search_products_ranked(store, message, max_price, category, agent_doc=agent_doc)
     if not products and category and not hard_ceiling:
         # teto de preço PEDIDO NA MENSAGEM pode ter zerado a categoria certa; melhor mostrar algo da categoria
         # do que nada. O orçamento da memória do cliente é limite duro: nunca é relaxado em silêncio.
@@ -758,6 +802,13 @@ async def run_product_agent(store: DataStore, message: str, customer: dict, llm=
         search_filter["price"] = {"$lte": max_price}
     event = TimelineEvent(category="agent", title="Recomendação com ranking ponderado (relevância + nota + estoque)" + (" + modelo" if synthesized else ""), agent="product_agent", collection="products_catalog", op="vectorSearch", filter=search_filter, result=products[:3], duration_ms=(perf_counter() - started) * 1000)
     events = [event]
+    if rerank_info["enabled"]:
+        events.append(TimelineEvent(
+            category="agent", agent="product_agent", collection="products_catalog", op="vectorSearch",
+            title=(f"$rerank no catálogo · {rerank_info['model']}" + (" (Public Preview)" if rerank_info["preview"] else "")
+                   if rerank_info["status"] == "ran" else "$rerank indisponível — ranking vetorial mantido"),
+            filter={"model": rerank_info["model"], "status": rerank_info["status"]},
+            result={"ordem": [item.get("sku") for item in products[:4]]}, duration_ms=rerank_info["ms"] or 0))
     if memory_bias:
         events.append(TimelineEvent(category="memory", title="Viés aplicado a partir da memória do cliente", agent="product_agent", collection="customer_memory", filter={"customer_key": customer["customer_key"], "max_price_brl": {"$gt": 0}}, result={"max_price_brl": budget_brl}))
     final_response = synthesized or response

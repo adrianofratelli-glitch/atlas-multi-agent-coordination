@@ -1,0 +1,288 @@
+[
+  {
+    "variant": "atual",
+    "model": null,
+    "recall_at_1": 0.417,
+    "recall_at_4": 0.917,
+    "mrr": 0.639,
+    "p50": 452.2,
+    "p95": 468.2,
+    "rows": [
+      {
+        "id": "pr-001",
+        "query": "quero um teclado mecânico",
+        "returned": [
+          "SKU-006",
+          "SKU-008",
+          "SKU-007",
+          "SKU-009"
+        ],
+        "rank": 3
+      },
+      {
+        "id": "pr-002",
+        "query": "caixa de som grande e potente",
+        "returned": [
+          "SKU-005",
+          "SKU-002",
+          "SKU-017",
+          "SKU-004"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-003",
+        "query": "webcam 4k para reuniões",
+        "returned": [
+          "SKU-012",
+          "SKU-006",
+          "SKU-018",
+          "SKU-003"
+        ],
+        "rank": null
+      },
+      {
+        "id": "pr-004",
+        "query": "ssd externo de 1 tera",
+        "returned": [
+          "SKU-017",
+          "SKU-006",
+          "SKU-019",
+          "SKU-018"
+        ],
+        "rank": 3
+      },
+      {
+        "id": "pr-005",
+        "query": "mochila para carregar notebook",
+        "returned": [
+          "SKU-017",
+          "SKU-020",
+          "SKU-006",
+          "SKU-008"
+        ],
+        "rank": 2
+      },
+      {
+        "id": "pr-006",
+        "query": "hub usb com várias portas",
+        "returned": [
+          "SKU-018",
+          "SKU-017",
+          "SKU-008",
+          "SKU-006"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-007",
+        "query": "carregador portátil pequeno",
+        "returned": [
+          "SKU-017",
+          "SKU-002",
+          "SKU-008",
+          "SKU-020"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-008",
+        "query": "monitor de 27 polegadas",
+        "returned": [
+          "SKU-011",
+          "SKU-006",
+          "SKU-012",
+          "SKU-010"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-009",
+        "query": "fone profissional de estúdio",
+        "returned": [
+          "SKU-002",
+          "SKU-003",
+          "SKU-012",
+          "SKU-005"
+        ],
+        "rank": 2
+      },
+      {
+        "id": "pr-010",
+        "query": "smartwatch mais completo para esportes",
+        "returned": [
+          "SKU-014",
+          "SKU-015",
+          "SKU-002",
+          "SKU-017"
+        ],
+        "rank": 2
+      },
+      {
+        "id": "pr-011",
+        "query": "caixinha de som compacta",
+        "returned": [
+          "SKU-002",
+          "SKU-004",
+          "SKU-005",
+          "SKU-017"
+        ],
+        "rank": 2
+      },
+      {
+        "id": "pr-012",
+        "query": "mouse mais básico e barato",
+        "returned": [
+          "SKU-008",
+          "SKU-006",
+          "SKU-009",
+          "SKU-018"
+        ],
+        "rank": 1
+      }
+    ]
+  },
+  {
+    "variant": "rerank",
+    "model": "rerank-3-lite",
+    "recall_at_1": 0.833,
+    "recall_at_4": 1.0,
+    "mrr": 0.917,
+    "p50": 644.9,
+    "p95": 727.7,
+    "rows": [
+      {
+        "id": "pr-001",
+        "query": "quero um teclado mecânico",
+        "returned": [
+          "SKU-007",
+          "SKU-006",
+          "SKU-008",
+          "SKU-020"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-002",
+        "query": "caixa de som grande e potente",
+        "returned": [
+          "SKU-005",
+          "SKU-004",
+          "SKU-003",
+          "SKU-002"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-003",
+        "query": "webcam 4k para reuniões",
+        "returned": [
+          "SKU-013",
+          "SKU-012",
+          "SKU-018",
+          "SKU-006"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-004",
+        "query": "ssd externo de 1 tera",
+        "returned": [
+          "SKU-019",
+          "SKU-017",
+          "SKU-006",
+          "SKU-018"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-005",
+        "query": "mochila para carregar notebook",
+        "returned": [
+          "SKU-017",
+          "SKU-020",
+          "SKU-018",
+          "SKU-006"
+        ],
+        "rank": 2
+      },
+      {
+        "id": "pr-006",
+        "query": "hub usb com várias portas",
+        "returned": [
+          "SKU-018",
+          "SKU-006",
+          "SKU-017",
+          "SKU-008"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-007",
+        "query": "carregador portátil pequeno",
+        "returned": [
+          "SKU-017",
+          "SKU-002",
+          "SKU-016",
+          "SKU-020"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-008",
+        "query": "monitor de 27 polegadas",
+        "returned": [
+          "SKU-011",
+          "SKU-010",
+          "SKU-006",
+          "SKU-018"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-009",
+        "query": "fone profissional de estúdio",
+        "returned": [
+          "SKU-003",
+          "SKU-002",
+          "SKU-001",
+          "SKU-005"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-010",
+        "query": "smartwatch mais completo para esportes",
+        "returned": [
+          "SKU-014",
+          "SKU-015",
+          "SKU-002",
+          "SKU-017"
+        ],
+        "rank": 2
+      },
+      {
+        "id": "pr-011",
+        "query": "caixinha de som compacta",
+        "returned": [
+          "SKU-004",
+          "SKU-005",
+          "SKU-002",
+          "SKU-017"
+        ],
+        "rank": 1
+      },
+      {
+        "id": "pr-012",
+        "query": "mouse mais básico e barato",
+        "returned": [
+          "SKU-008",
+          "SKU-006",
+          "SKU-009",
+          "SKU-018"
+        ],
+        "rank": 1
+      }
+    ]
+  }
+]

@@ -1,0 +1,490 @@
+{
+  "summary": {
+    "mode": "live",
+    "cases": 24,
+    "scored_cases": 24,
+    "skipped_requires_llm": 0,
+    "routing_accuracy": 1,
+    "resolution_rate": 1,
+    "avg_handoffs": 0.125,
+    "min_handoffs_respected": 1,
+    "avg_tokens": 1429.7,
+    "degraded_turns": 0,
+    "database": "multi_agent_poc_test",
+    "embedding_classifiers": {
+      "scope_classifier": {
+        "method": "vector",
+        "scope": "out",
+        "error": false
+      },
+      "turn_classifier": {
+        "method": "vector",
+        "personal": false,
+        "error": false
+      },
+      "embedding_path_live": true
+    },
+    "synthetic": true,
+    "limitation": "Dataset e agente compartilham a mesma família de modelo. As frases foram escritas para exercitar o roteamento determinístico e as cadeias reais, NÃO são tráfego de produção; leia a acurácia como regressão, não como estimativa de campo."
+  },
+  "rows": [
+    {
+      "id": "route-001",
+      "customer": "ana",
+      "expected_agent": "order_agent",
+      "actual_agent": "order_agent",
+      "final_agent": "order_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "order_agent"
+      ],
+      "tokens": 1473,
+      "degraded": false,
+      "latency_ms": 17761.8
+    },
+    {
+      "id": "route-002",
+      "customer": "ana",
+      "expected_agent": "order_agent",
+      "actual_agent": "order_agent",
+      "final_agent": "logistics_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 1,
+      "min_handoffs_ok": true,
+      "chain": [
+        "order_agent",
+        "logistics_agent"
+      ],
+      "tokens": 2768,
+      "degraded": false,
+      "latency_ms": 16148.4
+    },
+    {
+      "id": "route-003",
+      "customer": "bruno",
+      "expected_agent": "billing_agent",
+      "actual_agent": "billing_agent",
+      "final_agent": "billing_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "billing_agent"
+      ],
+      "tokens": 1553,
+      "degraded": false,
+      "latency_ms": 12709.8
+    },
+    {
+      "id": "route-004",
+      "customer": "bruno",
+      "expected_agent": "billing_agent",
+      "actual_agent": "billing_agent",
+      "final_agent": "billing_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "billing_agent"
+      ],
+      "tokens": 1358,
+      "degraded": false,
+      "latency_ms": 11390.8
+    },
+    {
+      "id": "route-005",
+      "customer": "carla",
+      "expected_agent": "loyalty_agent",
+      "actual_agent": "loyalty_agent",
+      "final_agent": "loyalty_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "loyalty_agent"
+      ],
+      "tokens": 908,
+      "degraded": false,
+      "latency_ms": 8240.6
+    },
+    {
+      "id": "route-006",
+      "customer": "carla",
+      "expected_agent": "warranty_agent",
+      "actual_agent": "warranty_agent",
+      "final_agent": "warranty_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "warranty_agent"
+      ],
+      "tokens": 1608,
+      "degraded": false,
+      "latency_ms": 12023.6
+    },
+    {
+      "id": "route-007",
+      "customer": "diego",
+      "expected_agent": "logistics_agent",
+      "actual_agent": "logistics_agent",
+      "final_agent": "logistics_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "logistics_agent"
+      ],
+      "tokens": 1342,
+      "degraded": false,
+      "latency_ms": 10434.7
+    },
+    {
+      "id": "route-008",
+      "customer": "diego",
+      "expected_agent": "support_agent",
+      "actual_agent": "support_agent",
+      "final_agent": "support_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "support_agent"
+      ],
+      "tokens": 0,
+      "degraded": false,
+      "latency_ms": 6117.6
+    },
+    {
+      "id": "route-009",
+      "customer": "ana",
+      "expected_agent": "product_agent",
+      "actual_agent": "product_agent",
+      "final_agent": "product_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "product_agent"
+      ],
+      "tokens": 0,
+      "degraded": false,
+      "latency_ms": 7091.6
+    },
+    {
+      "id": "route-010",
+      "customer": "ana",
+      "expected_agent": "order_agent",
+      "actual_agent": "order_agent",
+      "final_agent": "order_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "order_agent"
+      ],
+      "tokens": 957,
+      "degraded": false,
+      "latency_ms": 8810.2
+    },
+    {
+      "id": "route-011",
+      "customer": "bruno",
+      "expected_agent": "support_agent",
+      "actual_agent": "support_agent",
+      "final_agent": "support_agent",
+      "route_ok": true,
+      "requires_llm": true,
+      "route_source": "orchestrator",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "support_agent"
+      ],
+      "tokens": 3090,
+      "degraded": false,
+      "latency_ms": 15131.8
+    },
+    {
+      "id": "route-012",
+      "customer": "carla",
+      "expected_agent": "loyalty_agent",
+      "actual_agent": "loyalty_agent",
+      "final_agent": "loyalty_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "loyalty_agent"
+      ],
+      "tokens": 108,
+      "degraded": false,
+      "latency_ms": 5791.1
+    },
+    {
+      "id": "route-013",
+      "customer": "diego",
+      "expected_agent": "logistics_agent",
+      "actual_agent": "logistics_agent",
+      "final_agent": "logistics_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "logistics_agent"
+      ],
+      "tokens": 46,
+      "degraded": false,
+      "latency_ms": 7208.0
+    },
+    {
+      "id": "route-014",
+      "customer": "ana",
+      "expected_agent": "billing_agent+order_agent",
+      "actual_agent": "billing_agent+order_agent",
+      "final_agent": "billing_agent+order_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "fanout",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "billing_agent",
+        "order_agent"
+      ],
+      "tokens": 3537,
+      "degraded": false,
+      "latency_ms": 12934.3
+    },
+    {
+      "id": "route-015",
+      "customer": "bruno",
+      "expected_agent": "billing_agent",
+      "actual_agent": "billing_agent",
+      "final_agent": "billing_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "billing_agent"
+      ],
+      "tokens": 1495,
+      "degraded": false,
+      "latency_ms": 13056.6
+    },
+    {
+      "id": "route-016",
+      "customer": "carla",
+      "expected_agent": "support_agent",
+      "actual_agent": "support_agent",
+      "final_agent": "support_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "support_agent"
+      ],
+      "tokens": 937,
+      "degraded": false,
+      "latency_ms": 7566.8
+    },
+    {
+      "id": "route-017",
+      "customer": "diego",
+      "expected_agent": "support_agent",
+      "actual_agent": "support_agent",
+      "final_agent": "order_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 2,
+      "min_handoffs_ok": true,
+      "chain": [
+        "support_agent",
+        "product_agent",
+        "order_agent"
+      ],
+      "tokens": 3226,
+      "degraded": false,
+      "latency_ms": 18303.5
+    },
+    {
+      "id": "route-018",
+      "customer": "ana",
+      "expected_agent": "logistics_agent",
+      "actual_agent": "logistics_agent",
+      "final_agent": "logistics_agent",
+      "route_ok": true,
+      "requires_llm": true,
+      "route_source": "orchestrator",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "logistics_agent"
+      ],
+      "tokens": 4616,
+      "degraded": false,
+      "latency_ms": 16348.9
+    },
+    {
+      "id": "route-019",
+      "customer": "bruno",
+      "expected_agent": "product_agent",
+      "actual_agent": "product_agent",
+      "final_agent": "product_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "product_agent"
+      ],
+      "tokens": 1935,
+      "degraded": false,
+      "latency_ms": 15462.6
+    },
+    {
+      "id": "route-020",
+      "customer": "carla",
+      "expected_agent": "loyalty_agent",
+      "actual_agent": "loyalty_agent",
+      "final_agent": "loyalty_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "loyalty_agent"
+      ],
+      "tokens": 926,
+      "degraded": false,
+      "latency_ms": 9086.5
+    },
+    {
+      "id": "route-021",
+      "customer": "diego",
+      "expected_agent": "order_agent",
+      "actual_agent": "order_agent",
+      "final_agent": "order_agent",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "rules",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "order_agent"
+      ],
+      "tokens": 2430,
+      "degraded": false,
+      "latency_ms": 12603.5
+    },
+    {
+      "id": "route-022",
+      "customer": "ana",
+      "expected_agent": "orchestrator",
+      "actual_agent": "orchestrator",
+      "final_agent": "orchestrator",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "fallback",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "orchestrator"
+      ],
+      "tokens": 0,
+      "degraded": false,
+      "latency_ms": 4396.1
+    },
+    {
+      "id": "route-023",
+      "customer": "bruno",
+      "expected_agent": "orchestrator",
+      "actual_agent": "orchestrator",
+      "final_agent": "orchestrator",
+      "route_ok": true,
+      "requires_llm": false,
+      "route_source": "fallback",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [
+        "orchestrator"
+      ],
+      "tokens": 0,
+      "degraded": false,
+      "latency_ms": 5133.1
+    },
+    {
+      "id": "route-024",
+      "customer": "carla",
+      "expected_agent": "guardrail",
+      "actual_agent": "guardrail",
+      "final_agent": "guardrail",
+      "route_ok": true,
+      "requires_llm": true,
+      "route_source": "fallback",
+      "resolved": true,
+      "handoffs": 0,
+      "min_handoffs_ok": true,
+      "chain": [],
+      "tokens": 0,
+      "degraded": false,
+      "latency_ms": 3644.9
+    }
+  ]
+}

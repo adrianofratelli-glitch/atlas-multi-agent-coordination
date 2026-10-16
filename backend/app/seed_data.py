@@ -113,7 +113,10 @@ KB_ARTICLES = [
 AGENTS = [
     {"agent_key": "orchestrator", "label": "Orquestrador", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Classifique, roteie e consolide. Nunca responda diretamente ao cliente.", "allowed_tools": ["route", "consolidate"], "max_turn_tokens": 2600, "max_output_tokens": 700, "active": True},
     {"agent_key": "order_agent", "label": "Pedidos", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Resolva status, troca e reembolso somente para pedidos do titular autenticado.", "allowed_tools": ["read_order", "update_order_status"], "max_turn_tokens": 4000, "max_output_tokens": 1000, "active": True},
-    {"agent_key": "product_agent", "label": "Produtos", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Recomende produtos relevantes usando somente resultados do catálogo.", "allowed_tools": ["vector_search_products"], "max_turn_tokens": 4500, "max_output_tokens": 1400, "active": True},
+    {"agent_key": "product_agent", "label": "Produtos", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Recomende produtos relevantes usando somente resultados do catálogo.", "allowed_tools": ["vector_search_products"], "max_turn_tokens": 4500, "max_output_tokens": 1400, "active": True,
+     # $rerank dos 8 candidatos do catálogo, LIGADO pela medição (ADR-007): recall@1 0,417 → 0,833 por +~180 ms.
+     # rerank-2.5-lite (não-Preview) empatou com o rerank-3-lite.
+     "retrieval": {"rerank": {"enabled": True, "model": "rerank-2.5-lite", "pool": 8, "top_n": 4}}},
     {"agent_key": "support_agent", "label": "Suporte", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Resolva dúvidas técnicas com evidência da base de conhecimento e transfira quando necessário.", "allowed_tools": ["hybrid_search_kb", "handoff"], "max_turn_tokens": 4500, "max_output_tokens": 1400, "active": True,
      # Retrieval do KB como dado, relido a cada hop: fusão ($rankFusion, ADR-006) e $rerank
      # (Public Preview nos rerank-3*, medido e DESLIGADO, ADR-007).
