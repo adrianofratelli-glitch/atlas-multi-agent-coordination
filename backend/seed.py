@@ -107,6 +107,8 @@ async def seed(store: DataStore, *, create_indexes: bool = True) -> list[str]:
         except Exception as exc:  # índice existente com outra definição ou permissão limitada
             messages.append(f"índices padrão: aviso ({exc})")
         messages.extend(await store.create_schema_validators())
+        from app.usage_ts import ensure_collection
+        messages.append(await ensure_collection(store))
         messages.extend(await create_search_indexes(store))
     return messages
 

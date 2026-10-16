@@ -6,7 +6,7 @@ from .economics import summarize_calls
 from .budget import TurnBudget, estimate_tokens
 from .cascade import (cascade_lookup, cascade_store_turn)
 from .database import DataStore, utcnow
-from . import observability, resilience, scope_classifier  # noqa: F401 — reexportado p/ monkeypatch nos testes
+from . import observability, resilience, scope_classifier, usage_ts  # noqa: F401 — reexportado p/ monkeypatch nos testes
 from .guardrails import check_output
 from .langfuse_client import build_turn_trace
 from .llm import LLMGateway
@@ -14,6 +14,8 @@ from .metrics import metrics
 from .models import ChatResponse, TimelineEvent
 from .router import (deterministic_orchestrator, has_domain_signal)
 from .guidance import (build_suggestions, customer_snapshot, is_capabilities_question, is_greeting, is_meta_question, is_thanks)
+
+_BACKGROUND: set = set()   # referências das tasks de economia (sem isso o GC pode cancelá-las)
 
 
 ROUTER_PROMPT = (
@@ -249,6 +251,18 @@ class OrchestrationService:
 
     async def _persist_trace(self, conversation_id: str, customer: dict, message: str, response: str, timeline: list[TimelineEvent], active_agent: str, usage: dict, duration_ms: float = 0, llm_calls: list[dict] | None = None) -> str | None:
         await self.store.insert_one("agent_traces", {"conversation_id": conversation_id, "customer_key": customer["customer_key"], "area": customer["area"], "message": message, "response": response, "active_agent": active_agent, "timeline": [event.model_dump(mode="python") for event in timeline], "usage": usage, "llm_calls": llm_calls or [], "economics": summarize_calls(llm_calls or []), "duration_ms": round(duration_ms, 2), "at": utcnow()})
+        # Economia em time series (ADR-008): uma medição por chamada de LLM e por HIT da cascata.
+        cache_hit = any(event.category == "cache" and isinstance(event.result, dict) and event.result.get("hit")
+                        for event in timeline)
+        record = usage_ts.record_turn(self.store, customer=customer, llm_calls=list(llm_calls or []),
+                                      cache_hit=cache_hit, tokens_saved=estimate_tokens(response) if cache_hit else 0)
+        if self.store.memory:
+            await record          # DEMO_MODE/CI: síncrono, determinístico
+        else:
+            # Atlas: fora do caminho crítico do turno (não soma um round-trip à resposta)
+            task = asyncio.create_task(record)
+            _BACKGROUND.add(task)
+            task.add_done_callback(_BACKGROUND.discard)
         # Uma trace Langfuse por turno cobrindo a timeline inteira (roteamento, cache, cada hop de
         # agente, handoffs, guardrails) — não só a decisão de cache isolada. Best-effort: uma falha
         # aqui nunca derruba a resposta já persistida acima.

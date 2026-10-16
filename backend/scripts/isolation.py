@@ -137,6 +137,8 @@ async def ensure_seeded(store: DataStore, *, wait_indexes: bool = True) -> list[
 
     messages += await seed_kb_retrieval(store)
     messages.append(await ensure_kb_lexical_index(store))
+    from app.usage_ts import ensure_collection
+    messages.append(await ensure_collection(store))
 
     demo = get_settings()
     if store.client is not None and demo.mongodb_brain_db != store.settings.mongodb_brain_db:

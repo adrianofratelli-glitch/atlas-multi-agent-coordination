@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from . import edge_guardrails, observability, resilience
+from . import edge_guardrails, observability, resilience, usage_ts
 from .budget import BudgetExceeded
 from .cascade import CACHE_POLICY
 from .config import get_settings
@@ -391,8 +391,27 @@ async def events_stream(request: Request, customer: Annotated[dict, Depends(curr
 
 
 @app.get("/api/metrics")
-async def get_metrics(_: dict = Depends(current_customer)):
-    return metrics.snapshot()
+async def get_metrics(_: dict = Depends(current_customer), store: DataStore = Depends(get_store)):
+    snapshot = metrics.snapshot()
+    # Economia agregada no servidor a partir da time series (ADR-008); sem ela, o snapshot em
+    # processo de sempre continua respondendo.
+    try:
+        snapshot["llm_usage"] = await usage_ts.usage_report(store, 24)
+    except Exception:  # noqa: BLE001
+        snapshot["llm_usage"] = {"source": "in_process", "window_hours": 24}
+    return snapshot
+
+
+@app.get("/api/economics")
+async def get_economics(hours: int = Query(24, ge=1, le=usage_ts.MAX_WINDOW_HOURS),
+                        _: dict = Depends(current_customer), store: DataStore = Depends(get_store)):
+    """Custo por agente por hora e economia do cache, por janela (time series `llm_usage_ts`)."""
+    try:
+        return await usage_ts.usage_report(store, hours)
+    except Exception:  # noqa: BLE001 — leitura falhou: caminho anterior (contadores em processo)
+        logger.warning("llm_usage_ts ilegível; devolvendo contadores em processo", exc_info=True)
+        return {"source": "in_process", "window_hours": hours, "metrics": metrics.snapshot()}
+
 
 
 @app.get("/metrics", include_in_schema=False, dependencies=[Depends(require_admin)])
