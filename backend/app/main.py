@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import sys
 import uuid
 from contextlib import asynccontextmanager, suppress
@@ -9,6 +10,7 @@ from time import perf_counter
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from starlette.background import BackgroundTask
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
@@ -341,8 +343,54 @@ async def guardrails(view: str, store: DataStore = Depends(get_store)):
     return [{key: value for key, value in item.items() if key != "_id"} for item in items]
 
 
-async def handoff_event_stream(request: Request, store: DataStore, customer_key: str, heartbeat_seconds: float = 15):
+# Teto de assinantes do feed ao vivo (ADR-009): cada assinante abre um change stream (um cursor
+# no servidor). Sem teto, abas esquecidas ou um cliente hostil abriam cursores sem limite.
+MAX_HANDOFF_SUBSCRIBERS = int(os.getenv("MAX_HANDOFF_SUBSCRIBERS", "100"))
+MAX_HANDOFF_SUBSCRIBERS_PER_CUSTOMER = int(os.getenv("MAX_HANDOFF_SUBSCRIBERS_PER_CUSTOMER", "5"))
+_handoff_subscribers: dict[str, int] = {}
+
+
+def _subscribe(customer_key: str) -> bool:
+    total = sum(_handoff_subscribers.values())
+    if total >= MAX_HANDOFF_SUBSCRIBERS or _handoff_subscribers.get(customer_key, 0) >= MAX_HANDOFF_SUBSCRIBERS_PER_CUSTOMER:
+        return False
+    _handoff_subscribers[customer_key] = _handoff_subscribers.get(customer_key, 0) + 1
+    return True
+
+
+class _Subscription:
+    """Liberação idempotente: chamada no fim do gerador E na BackgroundTask da resposta (se o
+    cliente cai antes do gerador começar, o `finally` dele nunca roda)."""
+
+    def __init__(self, customer_key: str):
+        self.customer_key, self.released = customer_key, False
+
+    def release(self) -> None:
+        if not self.released:
+            self.released = True
+            _unsubscribe(self.customer_key)
+
+
+def _unsubscribe(customer_key: str) -> None:
+    left = _handoff_subscribers.get(customer_key, 0) - 1
+    if left > 0:
+        _handoff_subscribers[customer_key] = left
+    else:
+        _handoff_subscribers.pop(customer_key, None)
+
+
+async def handoff_event_stream(request: Request, store: DataStore, customer_key: str, heartbeat_seconds: float = 15,
+                               subscription: "_Subscription | None" = None):
     """Adapt the Change Stream to SSE with immediate confirmation and heartbeats."""
+    try:
+        async for chunk in _handoff_event_stream(request, store, customer_key, heartbeat_seconds):
+            yield chunk
+    finally:
+        if subscription is not None:
+            subscription.release()
+
+
+async def _handoff_event_stream(request: Request, store: DataStore, customer_key: str, heartbeat_seconds: float = 15):
     queue: asyncio.Queue[tuple[str, object | None]] = asyncio.Queue()
 
     async def pump_handoffs() -> None:
@@ -366,7 +414,10 @@ async def handoff_event_stream(request: Request, store: DataStore, customer_key:
             except TimeoutError:
                 yield ": keepalive\n\n"
                 continue
-            if kind == "event":
+            if kind == "event" and isinstance(payload, dict) and "_resync" in payload:
+                # histórico perdido/invalidate: a UI relê /api/handoffs em vez de perder eventos
+                yield f"event: resync\ndata: {json.dumps({'reason': str(payload['_resync'])[:80]})}\n\n"
+            elif kind == "event":
                 yield f"data: {json.dumps(payload, default=str)}\n\n"
             elif kind == "error":
                 log("change_stream_error", customer_key=customer_key, error=type(payload).__name__)
@@ -382,11 +433,15 @@ async def handoff_event_stream(request: Request, store: DataStore, customer_key:
 @app.get("/api/events/stream")
 async def events_stream(request: Request, customer: Annotated[dict, Depends(current_customer)], store: DataStore = Depends(get_store)):
     """Feed ao vivo de coordenação: Change Stream do Atlas em agent_handoffs, via SSE."""
-
+    if not _subscribe(customer["customer_key"]):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            "limite de feeds ao vivo abertos atingido; feche uma aba ou tente de novo")
+    subscription = _Subscription(customer["customer_key"])
     return StreamingResponse(
-        handoff_event_stream(request, store, customer["customer_key"]),
+        handoff_event_stream(request, store, customer["customer_key"], subscription=subscription),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+        background=BackgroundTask(subscription.release),
     )
 
 
@@ -411,7 +466,6 @@ async def get_economics(hours: int = Query(24, ge=1, le=usage_ts.MAX_WINDOW_HOUR
     except Exception:  # noqa: BLE001 — leitura falhou: caminho anterior (contadores em processo)
         logger.warning("llm_usage_ts ilegível; devolvendo contadores em processo", exc_info=True)
         return {"source": "in_process", "window_hours": hours, "metrics": metrics.snapshot()}
-
 
 
 @app.get("/metrics", include_in_schema=False, dependencies=[Depends(require_admin)])

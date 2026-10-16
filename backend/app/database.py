@@ -422,27 +422,21 @@ class DataStore:
             return deleted
 
     async def watch_handoffs(self, customer_key: str):
-        """Live feed de handoffs do cliente: Change Stream no Atlas, poll no modo DEMO_MODE."""
+        """Live feed de handoffs do cliente: Change Stream no Atlas, poll no modo DEMO_MODE.
+
+        Endurecido em 2026-10 (ADR-009): o `$match` por `customer_key` roda NO SERVIDOR, sem o
+        antigo ramo `customer_key ausente` (que trazia handoff sem dono para o app filtrar);
+        com pov-shared, o `ChangeStreamWorker` guarda o resume token do assinante, reabre com
+        backoff depois de uma queda e transforma invalidate/ChangeStreamHistoryLost/token recusado
+        num evento `{"_resync": motivo}` — a UI relê `/api/handoffs` em vez de perder eventos
+        calada. O cursor fecha quando o cliente desconecta (o gerador é encerrado).
+        """
+        if not isinstance(customer_key, str) or not customer_key:
+            return
         if not self.memory:
             try:
-                # customer_key denormalizado no handoff: o filtro de dono roda no
-                # próprio Change Stream (server-side), sem find_one por evento.
-                # Docs antigos sem o campo caem no fallback app-side abaixo.
-                stream = await self._collection("agent_handoffs").watch(
-                    [{"$match": {"operationType": "insert", "$or": [
-                        {"fullDocument.customer_key": customer_key},
-                        {"fullDocument.customer_key": {"$exists": False}},
-                    ]}}],
-                    full_document="updateLookup",
-                )
-                async with stream:
-                    async for change in stream:
-                        doc = change["fullDocument"]
-                        if doc.get("customer_key") is None:  # legado: valida dono via conversa
-                            owner = await self.find_one("agent_conversations", {"conversation_id": doc.get("conversation_id"), "customer_key": customer_key})
-                            if not owner:
-                                continue
-                        yield {key: value for key, value in doc.items() if key != "_id"}
+                async for item in self._watch_handoffs_atlas(customer_key):
+                    yield item
                 return
             except Exception:
                 pass
@@ -451,7 +445,7 @@ class DataStore:
         seen_limit = 1000
         while True:
             await asyncio.sleep(1.2)
-            items = await self.find_many("agent_handoffs", {}, limit=200, sort=[("at", 1)])
+            items = await self.find_many("agent_handoffs", {"customer_key": customer_key}, limit=200, sort=[("at", 1)])
             for item in items:
                 marker = str(item.get("_id"))
                 if marker in seen:
@@ -460,9 +454,61 @@ class DataStore:
                 seen_order.append(marker)
                 if len(seen_order) > seen_limit:
                     seen.discard(seen_order.popleft())
-                owner = await self.find_one("agent_conversations", {"conversation_id": item.get("conversation_id"), "customer_key": customer_key})
-                if owner:
-                    yield {key: value for key, value in item.items() if key != "_id"}
+                yield {key: value for key, value in item.items() if key != "_id"}
+
+    @staticmethod
+    def handoff_pipeline(customer_key: str) -> list[dict]:
+        """Filtro de dono NO SERVIDOR (o change stream só entrega inserts deste cliente)."""
+        return [{"$match": {"operationType": {"$in": ["insert", "invalidate"]},
+                            "$or": [{"operationType": "invalidate"},
+                                    {"fullDocument.customer_key": customer_key}]}}]
+
+    async def _watch_handoffs_atlas(self, customer_key: str):
+        from .atlas_compat import SHARED
+
+        coll = self._collection("agent_handoffs")
+        if not SHARED:  # sem pov-shared: watch direto, como antes (sem retomada)
+            stream = await coll.watch(self.handoff_pipeline(customer_key), full_document="updateLookup")
+            async with stream:
+                async for change in stream:
+                    doc = change.get("fullDocument") or {}
+                    yield {key: value for key, value in doc.items() if key != "_id"}
+            return
+        import atlas_retrieval as ar
+
+        queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+
+        async def open_stream(token):
+            kwargs = {"full_document": "updateLookup", "max_await_time_ms": 5000}
+            if token:
+                kwargs["resume_after"] = token
+            return await coll.watch(self.handoff_pipeline(customer_key), **kwargs)
+
+        async def handler(change):
+            doc = change.get("fullDocument")
+            if not isinstance(doc, dict) or doc.get("customer_key") != customer_key:
+                # nunca deveria chegar (o $match roda no servidor): descarta e registra
+                logger.warning("change stream entregou handoff fora do escopo do assinante")
+                return
+            item = {key: value for key, value in doc.items() if key != "_id"}
+            if queue.full():
+                queue.get_nowait()   # assinante lento: descarta o mais antigo, não trava o stream
+            queue.put_nowait(item)
+
+        async def on_lost(reason):
+            if queue.full():
+                queue.get_nowait()
+            queue.put_nowait({"_resync": reason})
+
+        worker = ar.ChangeStreamWorker(name=f"handoffs:{customer_key}", open_stream=open_stream,
+                                       handler=handler, store=ar.MemoryResumeTokenStore(),
+                                       on_history_lost=on_lost)
+        worker.start()
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            await worker.stop()
 
     async def create_schema_validators(self) -> list[str]:
         """Schema-at-boundary: cada handoff/trace é validado pelo próprio MongoDB, não só pela camada Python —

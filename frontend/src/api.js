@@ -88,9 +88,16 @@ export const api = {
       const chunks = buffer.split('\n\n');
       buffer = chunks.pop();
       for (const chunk of chunks) {
-        if (chunk.startsWith('data: ')) {
-          try { onEvent(JSON.parse(chunk.slice(6))); } catch { /* linha incompleta, ignora */ }
-        }
+        // `event: resync` = o servidor perdeu o histórico do change stream (ADR-009): quem
+        // consome relê /api/handoffs em vez de confiar que não perdeu nada.
+        const lines = chunk.split('\n');
+        const kind = lines.find((l) => l.startsWith('event: '))?.slice(7);
+        const data = lines.find((l) => l.startsWith('data: '))?.slice(6);
+        if (!data) continue;
+        try {
+          const payload = JSON.parse(data);
+          onEvent(kind === 'resync' ? { _resync: payload.reason ?? 'resync' } : payload);
+        } catch { /* linha incompleta, ignora */ }
       }
     }
     } finally {

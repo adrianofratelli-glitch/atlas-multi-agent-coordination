@@ -511,6 +511,146 @@ async def scenario_kb_max_time() -> Verdict:
                           {"rrf_aplicacao"}, then="rankFusion")
 
 
+# ---------------------------------------------------------------- change stream de agent_handoffs (2026-10), LIVE no *_test
+
+
+async def _handoff_store(name):
+    if os.getenv("LIVE", "").strip() not in {"1", "true", "yes"}:
+        return None
+    from scripts.isolation import open_test_store
+
+    store, _ = await open_test_store(what=f"chaos_suite {name}", seed_if_empty=False, wait_indexes=False)
+    return store
+
+
+def _handoff(key, n, tag):
+    from app.database import utcnow
+    return {"conversation_id": f"conv-{tag}-{key}", "customer_key": key, "from_agent": "orchestrator",
+            "to_agent": "order_agent", "reason": f"{tag}-{n}", "at": utcnow(), "_chaos": tag}
+
+
+async def _drain(agen, want, timeout):
+    got = []
+    async def run():
+        async for item in agen:
+            got.append(item)
+            if len(got) >= want:
+                return
+    try:
+        await asyncio.wait_for(run(), timeout)
+    except asyncio.TimeoutError:
+        pass
+    return got
+
+
+async def scenario_handoff_stream_isolation() -> Verdict:
+    name = "handoff_stream_isolation"
+    assertion = ("18 assinantes simultâneos de 6 clientes; cada cliente recebe só os próprios handoffs "
+                 "(filtro no $match do servidor), nenhum evento cruza")
+    store = await _handoff_store(name)
+    if store is None:
+        return Verdict(name, assertion, False, "LIVE=1 ausente — cenário não roda contra Atlas", skipped=True)
+    started = perf_counter()
+    keys = [f"chaos-cs-{i}" for i in range(6)]
+    coll = store._collection("agent_handoffs")
+    try:
+        subs = [(k, store.watch_handoffs(k)) for k in keys for _ in range(3)]
+        tasks = [asyncio.create_task(_drain(agen, 2, 25)) for _, agen in subs]
+        await asyncio.sleep(4)   # todos os watch abertos antes dos inserts
+        for k in keys:
+            await coll.insert_many([_handoff(k, n, name) for n in range(2)])
+        results = await asyncio.gather(*tasks)
+        leaks = sum(1 for (k, _), got in zip(subs, results) for item in got if item.get("customer_key") != k)
+        complete = sum(len(got) == 2 for got in results)
+        for _, agen in subs:
+            await agen.aclose()
+        ok = leaks == 0 and complete == len(subs)
+        return Verdict(name, assertion, ok, f"assinantes={len(subs)} completos={complete} vazamentos={leaks}",
+                       perf_counter() - started)
+    finally:
+        await coll.delete_many({"_chaos": name})
+        await store.close()
+
+
+class _WatchProxy:
+    """Collection real com um gancho em `watch`: guarda o cursor aberto e pode falhar 1x."""
+
+    def __init__(self, coll, fail_first=None):
+        self.coll, self.fail_first, self.streams, self.opened = coll, fail_first, [], []
+
+    async def watch(self, pipeline, **kw):
+        self.opened.append(kw.get("resume_after"))
+        if self.fail_first is not None:
+            exc, self.fail_first = self.fail_first, None
+            raise exc
+        stream = await self.coll.watch(pipeline, **kw)
+        self.streams.append(stream)
+        return stream
+
+    def __getattr__(self, item):
+        return getattr(self.coll, item)
+
+
+async def scenario_handoff_stream_drop() -> Verdict:
+    name = "handoff_stream_drop"
+    assertion = ("cursor do change stream fechado no meio → o assinante reabre com o resume token e "
+                 "recebe o handoff seguinte, sem duplicar o anterior")
+    store = await _handoff_store(name)
+    if store is None:
+        return Verdict(name, assertion, False, "LIVE=1 ausente — cenário não roda contra Atlas", skipped=True)
+    started = perf_counter()
+    real = store._collection("agent_handoffs")
+    proxy = _WatchProxy(real)
+    store._collection = lambda n, brain=False, _orig=store._collection: proxy if n == "agent_handoffs" else _orig(n, brain)
+    key = "chaos-cs-drop"
+    try:
+        agen = store.watch_handoffs(key)
+        task = asyncio.create_task(_drain(agen, 2, 30))
+        await asyncio.sleep(4)
+        await real.insert_one(_handoff(key, 1, name))
+        await asyncio.sleep(2)
+        if proxy.streams:
+            await proxy.streams[-1].close()          # a conexão "cai"
+        await asyncio.sleep(2)
+        await real.insert_one(_handoff(key, 2, name))
+        got = await task
+        await agen.aclose()
+        reasons = [g.get("reason") for g in got]
+        ok = reasons == [f"{name}-1", f"{name}-2"] and len(proxy.opened) >= 2 and proxy.opened[-1] is not None
+        return Verdict(name, assertion, ok, f"recebidos={reasons} aberturas={len(proxy.opened)} "
+                       f"retomou_com_token={proxy.opened[-1] is not None}", perf_counter() - started)
+    finally:
+        await real.delete_many({"_chaos": name})
+        await store.close()
+
+
+async def scenario_handoff_history_lost() -> Verdict:
+    name = "handoff_history_lost"
+    assertion = ("ChangeStreamHistoryLost ao abrir → evento `resync` para a UI reler /api/handoffs e o "
+                 "stream volta a entregar handoffs")
+    store = await _handoff_store(name)
+    if store is None:
+        return Verdict(name, assertion, False, "LIVE=1 ausente — cenário não roda contra Atlas", skipped=True)
+    started = perf_counter()
+    real = store._collection("agent_handoffs")
+    proxy = _WatchProxy(real, fail_first=_ServerSays("ChangeStreamHistoryLost (simulado)", 286))
+    store._collection = lambda n, brain=False, _orig=store._collection: proxy if n == "agent_handoffs" else _orig(n, brain)
+    key = "chaos-cs-lost"
+    try:
+        agen = store.watch_handoffs(key)
+        task = asyncio.create_task(_drain(agen, 2, 30))
+        await asyncio.sleep(5)
+        await real.insert_one(_handoff(key, 1, name))
+        got = await task
+        await agen.aclose()
+        ok = len(got) == 2 and "_resync" in got[0] and got[1].get("reason") == f"{name}-1"
+        return Verdict(name, assertion, ok, f"eventos={[('resync' if '_resync' in g else g.get('reason')) for g in got]}",
+                       perf_counter() - started)
+    finally:
+        await real.delete_many({"_chaos": name})
+        await store.close()
+
+
 SCENARIOS = {
     "tool_timeout": scenario_tool_timeout,
     "agent_hang": scenario_agent_hang,
@@ -531,6 +671,9 @@ SCENARIOS = {
     "kb_lexical_building": scenario_kb_lexical_building,
     "kb_rerank_rejected": scenario_kb_rerank_rejected,
     "kb_max_time": scenario_kb_max_time,
+    "handoff_stream_isolation": scenario_handoff_stream_isolation,
+    "handoff_stream_drop": scenario_handoff_stream_drop,
+    "handoff_history_lost": scenario_handoff_history_lost,
 }
 
 
