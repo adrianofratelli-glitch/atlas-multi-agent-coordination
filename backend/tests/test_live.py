@@ -36,7 +36,10 @@ pytestmark = [
 
 @pytest.fixture
 async def live():
-    settings = get_settings().model_copy(update={"demo_mode": False})
+    # Banco de TESTE isolado, nunca a demo (achado 2026-10-16: esta bateria deixava
+    # langgraph_checkpoints órfãos em multi_agent_poc). Mesmo guard do test_live_web.
+    from scripts.isolation import guard, test_settings
+    settings = guard(test_settings(demo_mode=False), what="bateria live")
     if not settings.mongodb_uri:
         pytest.skip("MONGODB_URI ausente")
     store = DataStore(settings)
@@ -50,6 +53,12 @@ async def live():
     unique_messages: list[str] = []
     yield store, llm, customer, unique_messages
     db = store.client[settings.mongodb_db]
+    # checkpoints do LangGraph: thread_id = "<customer_key>:<conversation_id>" (sem $regex)
+    threads = [f"{key}:{c['conversation_id']}" for c in
+               await db["agent_conversations"].find({"customer_key": key}, {"conversation_id": 1}).to_list(None)]
+    if threads:
+        await db["langgraph_checkpoints"].delete_many({"thread_id": {"$in": threads}})
+        await db["langgraph_checkpoint_writes"].delete_many({"thread_id": {"$in": threads}})
     for name in await db.list_collection_names():
         await db[name].delete_many({"customer_key": key})
     await db["semantic_cache"].delete_many({"question_text": {"$in": unique_messages}})

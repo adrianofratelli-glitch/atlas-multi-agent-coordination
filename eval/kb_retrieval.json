@@ -1,0 +1,278 @@
+{
+  "name": "kb-retrieval",
+  "version": 1,
+  "synthetic": true,
+  "generated_by": "Claude Opus 5.5, 2026-10-16, a partir dos 12 artigos de app/seed_data.py:KB_ARTICLES",
+  "limitation": "Base pequena (12 artigos): recall@5 é quase trivial porque o support_agent recebe 4 artigos; as métricas que discriminam são recall@1, recall@3 e MRR. Consultas escritas pela mesma família de modelo do agente; mede o retrieval, não a resposta.",
+  "limit": 4,
+  "cases": [
+    {
+      "id": "kb-001",
+      "kind": "synonym",
+      "query": "como peço meu estorno?",
+      "expected": [
+        "KB-011"
+      ]
+    },
+    {
+      "id": "kb-002",
+      "kind": "synonym",
+      "query": "quero a devolução do dinheiro, quanto demora?",
+      "expected": [
+        "KB-011"
+      ]
+    },
+    {
+      "id": "kb-003",
+      "kind": "synonym",
+      "query": "quanto tempo leva o reembolso?",
+      "expected": [
+        "KB-011"
+      ]
+    },
+    {
+      "id": "kb-004",
+      "kind": "synonym",
+      "query": "posso devolver um produto que chegou quebrado?",
+      "expected": [
+        "KB-003"
+      ]
+    },
+    {
+      "id": "kb-005",
+      "kind": "synonym",
+      "query": "substituição de item com defeito",
+      "expected": [
+        "KB-003"
+      ]
+    },
+    {
+      "id": "kb-006",
+      "kind": "synonym",
+      "query": "o produto veio avariado",
+      "expected": [
+        "KB-003"
+      ]
+    },
+    {
+      "id": "kb-007",
+      "kind": "synonym",
+      "query": "como rastrear minha encomenda?",
+      "expected": [
+        "KB-010"
+      ]
+    },
+    {
+      "id": "kb-008",
+      "kind": "synonym",
+      "query": "meu headset ficou mudo",
+      "expected": [
+        "KB-001"
+      ]
+    },
+    {
+      "id": "kb-009",
+      "kind": "synonym",
+      "query": "smartwatch não pareia",
+      "expected": [
+        "KB-008"
+      ]
+    },
+    {
+      "id": "kb-010",
+      "kind": "synonym",
+      "query": "tela preta no monitor",
+      "expected": [
+        "KB-006"
+      ]
+    },
+    {
+      "id": "kb-011",
+      "kind": "synonym",
+      "query": "a câmera não aparece no computador",
+      "expected": [
+        "KB-007"
+      ]
+    },
+    {
+      "id": "kb-012",
+      "kind": "synonym",
+      "query": "o carregador demora muito",
+      "expected": [
+        "KB-009"
+      ]
+    },
+    {
+      "id": "kb-013",
+      "kind": "paraphrase",
+      "query": "meu fone não sai som nenhum",
+      "expected": [
+        "KB-001"
+      ]
+    },
+    {
+      "id": "kb-014",
+      "kind": "paraphrase",
+      "query": "só um lado do fone funciona",
+      "expected": [
+        "KB-002"
+      ]
+    },
+    {
+      "id": "kb-015",
+      "kind": "paraphrase",
+      "query": "o teclado sem fio não funciona",
+      "expected": [
+        "KB-004"
+      ]
+    },
+    {
+      "id": "kb-016",
+      "kind": "paraphrase",
+      "query": "o ponteiro do mouse fica pulando",
+      "expected": [
+        "KB-005"
+      ]
+    },
+    {
+      "id": "kb-017",
+      "kind": "paraphrase",
+      "query": "o relógio não conecta no celular",
+      "expected": [
+        "KB-008"
+      ]
+    },
+    {
+      "id": "kb-018",
+      "kind": "paraphrase",
+      "query": "a bateria carrega devagar",
+      "expected": [
+        "KB-009"
+      ]
+    },
+    {
+      "id": "kb-019",
+      "kind": "paraphrase",
+      "query": "onde está o meu pedido?",
+      "expected": [
+        "KB-010"
+      ]
+    },
+    {
+      "id": "kb-020",
+      "kind": "paraphrase",
+      "query": "a garantia cobre defeito de fábrica?",
+      "expected": [
+        "KB-012"
+      ]
+    },
+    {
+      "id": "kb-021",
+      "kind": "typo",
+      "query": "fone sem audio",
+      "expected": [
+        "KB-001"
+      ]
+    },
+    {
+      "id": "kb-022",
+      "kind": "typo",
+      "query": "teclado nao conceta",
+      "expected": [
+        "KB-004"
+      ]
+    },
+    {
+      "id": "kb-023",
+      "kind": "typo",
+      "query": "mouze com cursor instavel",
+      "expected": [
+        "KB-005"
+      ]
+    },
+    {
+      "id": "kb-024",
+      "kind": "typo",
+      "query": "monitor sem imagen",
+      "expected": [
+        "KB-006"
+      ]
+    },
+    {
+      "id": "kb-025",
+      "kind": "typo",
+      "query": "webcan nao reconhecida",
+      "expected": [
+        "KB-007"
+      ]
+    },
+    {
+      "id": "kb-026",
+      "kind": "typo",
+      "query": "garantai dos produtos",
+      "expected": [
+        "KB-012"
+      ]
+    },
+    {
+      "id": "kb-027",
+      "kind": "typo",
+      "query": "prazo de rembolso",
+      "expected": [
+        "KB-011"
+      ]
+    },
+    {
+      "id": "kb-028",
+      "kind": "category",
+      "query": "não funciona direito",
+      "expected": [
+        "KB-006",
+        "KB-007"
+      ],
+      "category": "video",
+      "notes": "filtro de categoria no servidor: todo resultado tem category=video"
+    },
+    {
+      "id": "kb-029",
+      "kind": "category",
+      "query": "como funciona o prazo?",
+      "expected": [
+        "KB-003",
+        "KB-011"
+      ],
+      "category": "trocas"
+    },
+    {
+      "id": "kb-030",
+      "kind": "category",
+      "query": "não conecta",
+      "expected": [
+        "KB-004",
+        "KB-005"
+      ],
+      "category": "perifericos"
+    },
+    {
+      "id": "kb-031",
+      "kind": "no_match",
+      "query": "qual é a capital da França?",
+      "expected": [],
+      "notes": "sem artigo correspondente: mede o que volta, fora do recall"
+    },
+    {
+      "id": "kb-032",
+      "kind": "no_match",
+      "query": "receita de bolo de cenoura",
+      "expected": [],
+      "notes": "sem artigo correspondente: mede o que volta, fora do recall"
+    },
+    {
+      "id": "kb-033",
+      "kind": "no_match",
+      "query": "XYZ-9999",
+      "expected": [],
+      "notes": "sem artigo correspondente: mede o que volta, fora do recall"
+    }
+  ]
+}

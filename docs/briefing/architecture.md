@@ -16,7 +16,7 @@ PoV de atendimento ao cliente multiagente onde o **MongoDB Atlas é tanto o data
 - **Backend**: FastAPI (`backend/app/main.py`), porta 8031 (estrita, sem fallback), driver `pymongo` assíncrono (`AsyncMongoClient`).
 - **LLM**: Anthropic (`backend/app/llm.py`), usado para (a) classificação de intenção quando a regra determinística empata, (b) síntese da resposta final sobre documentos já buscados no Mongo, (c) classificador de guardrail semântico.
 - **Dados/coordenação**: MongoDB Atlas — dois bancos lógicos, `multi_agent_poc` (dados de negócio + estado operacional) e `multiagent_brain` (configuração: `agent_registry`, `routing_rules`, `guardrail_policies`).
-- **Busca**: Atlas Vector Search com Automated Embedding (`voyage-4`), Atlas Search (BM25/lexical), `$rankFusion` (MongoDB 8.1+) para híbrido server-side.
+- **Busca**: Atlas Vector Search com Automated Embedding (`voyage-4`), Atlas Search (BM25/lexical), `$rankFusion` (MongoDB 8.0+, doc oficial; cluster em 9.0.4) para híbrido server-side.
 - **Observabilidade**: Langfuse self-host (uma trace por turno), Change Streams para live feed de handoffs, métricas in-process (`backend/app/metrics.py`).
 - **Modo sem Atlas**: `DEMO_MODE=1` troca `DataStore` para um backend em memória (`backend/app/database.py`) com os mesmos contratos — usado por testes/CI, sem Vector Search/Change Streams reais.
 

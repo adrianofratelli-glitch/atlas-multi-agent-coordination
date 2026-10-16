@@ -169,7 +169,7 @@ Erro, índice ausente ou limiar não medido ⇒ trata como pessoal (falha fechad
 ### 1.6 Busca híbrida de KB — `$rankFusion` (server-side) + fallback RRF em app
 **Onde**: `backend/app/retrieval.py` (pipelines), `backend/app/agents.py:690-719` (`search_kb`, orquestra qual estratégia usar).
 
-**Caminho preferido — `$rankFusion` (MongoDB 8.1+)**, `retrieval.py:55-71`:
+**Caminho preferido — `$rankFusion` (MongoDB 8.0+)**, `retrieval.py:55-71`:
 ```python
 [
   {"$rankFusion": {"input": {"pipelines": {

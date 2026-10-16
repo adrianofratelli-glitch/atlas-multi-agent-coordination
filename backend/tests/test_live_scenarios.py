@@ -16,7 +16,6 @@ import pytest
 if os.getenv("LIVE") == "1":
     os.environ["LANGFUSE_PUBLIC_KEY"] = os.environ["LANGFUSE_SECRET_KEY"] = ""
 
-from app.config import get_settings
 from app.database import DataStore
 from app.demo_reset import reset_customer_memory
 from app.llm import LLMGateway
@@ -30,7 +29,10 @@ USERS = list(MEMORY_DEMOS)
 
 @pytest.fixture
 async def env():
-    settings = get_settings().model_copy(update={"demo_mode": False})
+    # Banco de TESTE isolado, nunca a demo (achado 2026-10-16: esta bateria deixava
+    # langgraph_checkpoints órfãos em multi_agent_poc). Mesmo guard do test_live_web.
+    from scripts.isolation import guard, test_settings
+    settings = guard(test_settings(demo_mode=False), what="bateria live")
     if not settings.mongodb_uri:
         pytest.skip("MONGODB_URI ausente")
     store = DataStore(settings)
