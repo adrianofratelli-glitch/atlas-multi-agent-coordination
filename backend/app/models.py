@@ -62,6 +62,11 @@ class TimelineEvent(BaseModel):
     def _serialize_driver_types(self, value: Any) -> Any:
         return _jsonable(value)
 
+    def model_post_init(self, __context: Any) -> None:
+        # ao vivo (POST /api/chat/stream): cada evento sai no momento em que nasce
+        from .live_events import publish
+        publish(self)
+
 
 class Suggestion(BaseModel):
     """Próximo passo clicável, sempre derivado de um documento que existe."""

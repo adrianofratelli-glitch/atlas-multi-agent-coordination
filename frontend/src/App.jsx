@@ -381,7 +381,8 @@ export default function App() {
     const value = raw.trim(); setInput(''); setBusy(true); setError(''); setSuggestions([]);
     setMessages((items) => [...items, { role: 'user', text: value }]);
     try {
-      const run = await api.chat(value, conversationId);
+      setTimeline([]); setLastRun(null);
+      const run = await api.chatStream(value, conversationId, (event) => setTimeline((items) => [...items, event]));
       setConversationId(run.conversation_id); setTimeline(run.timeline); setLastRun(run); setSuggestions(run.suggestions || []);
       const longTermUsed = (run.timeline || []).some((event) => event.collection === 'long_term_memory');
       setMessages((items) => [...items, { role: 'assistant', agent: run.active_agent, text: run.response, cacheHit: run.cache_hit, cacheSource: run.cache_source, tokens: run.usage?.total ?? 0, longTermUsed }]);
@@ -413,9 +414,9 @@ export default function App() {
     <div data-pov-shell>
       <a className="pov-skip-link" href="#conteudo-principal">Pular para o conteúdo</a>
       <nav className="top-nav"><div className="nav-inner"><button className="brand" onClick={() => setNav('Chat')} aria-label="Ir para o Chat"><span className="leaf">◆</span><span>MongoDB</span><b>Agent Control Plane</b></button><div className="nav-tabs">{NAV.map((item) => <button className={nav === item ? 'active' : ''} aria-current={nav === item ? 'page' : undefined} key={item} onClick={() => setNav(item)}>{item}</button>)}</div><label className="identity-select">identidade<select disabled={busy} value={customer?.customer_key || 'ana'} onChange={(event) => switchIdentity(event.target.value)}>{IDENTITIES.map((key) => <option key={key} value={key}>{key}</option>)}</select></label><div className="live-pill" title={liveError || 'Change Stream do MongoDB Atlas em agent_handoffs'}><span className={liveStatus === 'live' ? 'ok' : liveStatus === 'connecting' ? 'connecting' : ''} />{liveStatus === 'live' ? 'ao vivo' : liveStatus === 'connecting' ? 'conectando' : 'offline'}</div><div className="health-pill"><span className={health ? 'ok' : ''} />{health ? `${health.storage} · ok` : 'conectando'}</div></div></nav>
-      <main id="conteudo-principal" tabIndex={-1} className="content">
+      <main id="conteudo-principal" tabIndex={-1} className={`content ${nav === 'Chat' ? 'content--chat' : ''}`}>
         {error && <div className="error-banner">{error}<button aria-label="Fechar aviso" onClick={() => setError('')}>×</button></div>}
-        {nav === 'Chat' && <>
+        {nav === 'Chat' && <div className="chat-stage">
           <header className="stage-header"><div><h1>Agentes em ação.</h1></div>
             <div className="turn-actions">
               <details className="session-details"><summary>Detalhes da sessão</summary><div>
@@ -463,8 +464,8 @@ export default function App() {
             </details>
           )}
           <ReplacementChain timeline={timeline} />
-          <div className="workspace workspace--focus"><ChatPanel key={customer?.customer_key} {...{ messages, input, setInput, send, busy, suggestions }} customerName={customer?.name} demos={demoScenarios} onSuggestion={(message) => send(message)} /><section className="timeline-panel"><div className="panel-label"><span>execução</span><code>{timeline.length} eventos</code></div><Timeline events={timeline} /></section></div>
-        </>}
+          <div className="workspace workspace--focus"><ChatPanel key={customer?.customer_key} {...{ messages, input, setInput, send, busy, suggestions }} customerName={customer?.name} demos={demoScenarios} onSuggestion={(message) => send(message)} /><section className="timeline-panel"><div className="panel-label"><span>execução</span><code>{busy ? `${timeline.length} eventos · ao vivo` : `${timeline.length} eventos`}</code></div><Timeline events={timeline} live={busy} /></section></div>
+        </div>}
         {nav === 'Métricas' && <MetricsPage metrics={metrics} evalRuns={evalRuns} adminMode={adminMode} />}
         {nav === 'Decisões' && <CompliancePage adminMode={adminMode} setAdminMode={setAdminMode} customerKey={customer?.customer_key} />}
       </main>

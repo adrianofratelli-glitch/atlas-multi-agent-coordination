@@ -14,7 +14,7 @@ from starlette.background import BackgroundTask
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from . import edge_guardrails, observability, resilience, usage_ts
+from . import edge_guardrails, live_events, observability, resilience, usage_ts
 from .budget import BudgetExceeded
 from .cascade import CACHE_POLICY
 from .config import get_settings
@@ -157,10 +157,8 @@ def _degraded_turn(payload: ChatRequest, customer: dict, reason: str) -> ChatRes
     )
 
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: Request, payload: ChatRequest, customer: Annotated[dict, Depends(current_customer)]):
-    if not limiter.allow(request_identity_key(request, customer["customer_key"])):
-        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "limite de requisições excedido")
+async def _run_chat(request: Request, payload: ChatRequest, customer: dict) -> ChatResponse:
+    """Um turno, com o mesmo deadline/degradação para /api/chat e /api/chat/stream."""
     async with metrics.track_route("chat"):
         with observability.span("turn", conversation_id=payload.conversation_id or "novo",
                                 customer_key=customer["customer_key"], area=customer["area"]):
@@ -184,6 +182,59 @@ async def chat(request: Request, payload: ChatRequest, customer: Annotated[dict,
                 return _degraded_turn(payload, customer, type(exc).__name__)
             edge_guardrails.validate_response(ChatResponse, response)
             return response
+
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat(request: Request, payload: ChatRequest, customer: Annotated[dict, Depends(current_customer)]):
+    if not limiter.allow(request_identity_key(request, customer["customer_key"])):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "limite de requisições excedido")
+    return await _run_chat(request, payload, customer)
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: Request, payload: ChatRequest, customer: Annotated[dict, Depends(current_customer)]):
+    """O MESMO turno de /api/chat, com cada evento da timeline em SSE assim que nasce
+    (`event: timeline`) e a resposta completa no fim (`event: result`, idêntica ao /api/chat)."""
+    if not limiter.allow(request_identity_key(request, customer["customer_key"])):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "limite de requisições excedido")
+    queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
+
+    def on_event(event) -> None:
+        if getattr(event, "replayed", False):
+            return   # eventos de replay do cache chegam junto do resultado
+        queue.put_nowait(("timeline", event.model_dump(mode="json")))
+
+    async def run() -> None:
+        try:
+            with live_events.capture(on_event):
+                response = await _run_chat(request, payload, customer)
+            await queue.put(("result", response.model_dump(mode="json")))
+        except HTTPException as exc:
+            await queue.put(("error", {"status": exc.status_code, "message": str(exc.detail)}))
+        except Exception as exc:  # noqa: BLE001
+            await queue.put(("error", {"status": 500, "message": type(exc).__name__}))
+
+    async def body():
+        task = asyncio.create_task(run())
+        try:
+            yield ": connected\n\n"
+            while True:
+                try:
+                    kind, data = await asyncio.wait_for(queue.get(), timeout=15)
+                except TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                yield f"event: {kind}\ndata: {json.dumps(data, default=str)}\n\n"
+                if kind in ("result", "error"):
+                    return
+        finally:
+            if not task.done():
+                task.cancel()   # cliente desconectou: o turno não continua órfão
+                with suppress(asyncio.CancelledError):
+                    await task
+
+    return StreamingResponse(body(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/warmup")

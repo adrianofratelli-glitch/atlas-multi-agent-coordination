@@ -65,6 +65,54 @@ export const api = {
     headers: { 'X-Admin-Key': import.meta.env.VITE_ADMIN_KEY || '' },
     body: JSON.stringify(body),
   }),
+  // Turno com a timeline AO VIVO (POST /api/chat/stream): cada evento chega quando nasce no
+  // servidor; o `result` final é idêntico ao do /api/chat. Sem stream (proxy, 404, rede), cai
+  // para o /api/chat de sempre — a demo nunca fica sem resposta por causa do streaming.
+  async chatStream(message, conversationId, onTimeline) {
+    let response;
+    try {
+      response = await fetch(`${BASE}/api/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ message, conversation_id: conversationId || null }),
+      });
+    } catch {
+      return api.chat(message, conversationId);
+    }
+    if (response.status === 404 || response.status === 405 || !response.body) return api.chat(message, conversationId);
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.detail || `HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
+        const chunks = buffer.split('\n\n');
+        buffer = chunks.pop();
+        for (const chunk of chunks) {
+          const lines = chunk.split('\n');
+          const kind = lines.find((l) => l.startsWith('event: '))?.slice(7);
+          const data = lines.find((l) => l.startsWith('data: '))?.slice(6);
+          if (!kind || !data) continue;
+          let payload;
+          try { payload = JSON.parse(data); } catch { continue; }
+          if (kind === 'timeline') onTimeline?.(payload);
+          else if (kind === 'result') return payload;
+          else if (kind === 'error') throw new Error(payload.message || `HTTP ${payload.status}`);
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+    throw new Error('Conexão do turno encerrada sem resposta. Tente novamente.');
+  },
+
   async streamEvents(onEvent, signal, onOpen) {
     const response = await fetch(`${BASE}/api/events/stream`, { headers: { Authorization: `Bearer ${token}` }, signal });
     if (!response.ok) {

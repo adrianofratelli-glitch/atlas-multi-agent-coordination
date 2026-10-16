@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import QueryDetails from './QueryDetails.jsx';
 import { explainArticles } from '../kbExplain.js';
 
@@ -57,8 +58,20 @@ function JsonBlock({ value }) {
   return <pre>{JSON.stringify(value, null, 2)}</pre>;
 }
 
-export default function Timeline({ events }) {
+export default function Timeline({ events, live = false }) {
+  const ref = useRef(null);
+  // segue o último evento enquanto o turno roda (a página não rola; a timeline sim)
+  useEffect(() => {
+    if (live && ref.current) ref.current.scrollTo({ top: ref.current.scrollHeight, behavior: 'smooth' });
+  }, [events?.length, live]);
   if (!events?.length) {
+    if (live) {
+      return (
+        <div className="timeline" ref={ref} aria-live="polite">
+          <div className="timeline-pending"><span className="pending-dot" /> roteando o turno…</div>
+        </div>
+      );
+    }
     return (
       <div className="empty-state">
         <div className="orbit-mark"><span /><span /><span /></div>
@@ -68,9 +81,9 @@ export default function Timeline({ events }) {
     );
   }
   return (
-    <div className="timeline" aria-label="Timeline do turno">
+    <div className="timeline" aria-label="Timeline do turno" ref={ref}>
       {events.map((event, index) => (
-        <article className={`timeline-event event-${event.category}`} key={`${event.title}-${index}`} style={{ '--delay': `${index * 65}ms` }}>
+        <article className={`timeline-event event-${event.category}`} key={`${event.title}-${index}`}>
           <div className="event-rail"><span>{String(index + 1).padStart(2, '0')}</span></div>
           <div className="event-card">
             <div className="event-heading">
@@ -97,6 +110,7 @@ export default function Timeline({ events }) {
           </div>
         </article>
       ))}
+      {live && <div className="timeline-pending"><span className="pending-dot" /> próximo passo em andamento…</div>}
     </div>
   );
 }
