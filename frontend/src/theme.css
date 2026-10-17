@@ -541,3 +541,11 @@ footer { max-width: 1560px; margin: auto; padding: 24px; border-top: 1px solid v
   .content.content--chat { padding-top: 12px; padding-bottom: 12px; }
   .content--chat .chat-stage { --chat-stage-offset: 92px; }
 }
+
+/* Revisão 2026-10-16 (validação no portal): com "Dados consultados" aberto a timeline sumia e a
+   caixa de mensagens ficava pequena. A página volta a rolar; o workspace tem altura própria. */
+@media (min-width: 1100px) and (min-height: 700px) {
+  .chat-stage { height: auto; min-height: 0; }
+  .chat-stage > .workspace { flex: none; height: clamp(640px, calc(100dvh - 120px), 960px); }
+  .chat-stage .workspace .messages { min-height: 320px; }
+}

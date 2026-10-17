@@ -119,3 +119,12 @@ contagem das 40 coleções da demo antes/depois (`DIFF_DEMO`).
 - **Medido depois:** 900 px antes e depois do turno; eventos aos 2,6 · 2,8 · 4,3 · 4,6 · 9,2 · 9,4 ·
   15,2 · 15,7 s. `tests/test_live_events.py` 4 OK (inclui turnos simultâneos sem misturar streams).
 - `DIFF_DEMO` vazio na sessão de UI (app nos bancos de teste).
+
+## Pós-validação no portal — 2026-10-16
+
+- **UI:** com "Dados consultados" aberto a timeline sumia e a caixa de resposta ficava pequena.
+  A página volta a rolar; workspace com altura própria (`clamp(640px, 100dvh − 120px, 960px)`),
+  mensagens ≥ 320 px. Medido (1440×900, painel aberto): workspace 780 px, mensagens 424 px,
+  timeline 732 px; eventos continuam chegando ao vivo. Frontend 12/12.
+- **Memória longa:** os 4 clientes já tinham roteiro de memória longa (`MEMORY_DEMOS`, 6 chips por
+  identidade); nada a acrescentar neste repo.
