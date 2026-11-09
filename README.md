@@ -1,5 +1,7 @@
 # Multi-agent coordination on MongoDB Atlas
 
+Mapa do código: [docs/MAPA_DO_CODIGO.md](docs/MAPA_DO_CODIGO.md)
+
 [![CI](https://github.com/adrianofratelli-glitch/atlas-multi-agent-coordination/actions/workflows/ci.yml/badge.svg)](https://github.com/adrianofratelli-glitch/atlas-multi-agent-coordination/actions/workflows/ci.yml)
 
 Eight customer-service agents coordinated through MongoDB Atlas: no queue, no Redis, no separate vector database. Routing rules, agent configuration, memory, cache, handoffs, and guardrail decisions are all documents you can query while the conversation is happening.
