@@ -19,4 +19,4 @@ habilitado no projeto; `rerank-3`/`rerank-3-lite` em Public Preview
 https://www.mongodb.com/docs/atlas/atlas-search/synonyms/ e operador `text` (fuzzy e synonyms
 não podem estar na mesma cláusula; `matchCriteria` sempre com synonyms). Medições de `$rankFusion`,
 `scoreDetails` (`$meta: "scoreDetails"`, rank `"NA"`) e `$rerank` dentro da fusão (rejeitado,
-code 12108704) estão no probe irmão: `../singleagent/docs/capability-probe-2026-10.md`.
+code 12108704) estão no probe irmão: `../atlas-agent-intelligence-layer/docs/capability-probe-2026-10.md`.

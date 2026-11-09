@@ -33,4 +33,4 @@ Manter a memória governada pelo servidor (`app/memory.py`), porque o contrato n
 
 - Checkpoint continua no `MongoDBSaver` (estado do grafo: o lugar certo do contrato do LangGraph).
 - Reavaliar se o store ganhar escrita condicional/transacional e recusa de namespace vazio. A PoV
-  irmã chegou à mesma decisão (`../singleagent/docs/adr/ADR-012-por-que-nao-mongodbstore-langgraph.md`).
+  irmã chegou à mesma decisão (`../atlas-agent-intelligence-layer/docs/adr/ADR-012-por-que-nao-mongodbstore-langgraph.md`).

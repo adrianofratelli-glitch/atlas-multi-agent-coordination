@@ -1,4 +1,4 @@
-# Arquitetura — multiagente-atendimento
+# Arquitetura — atlas-multi-agent-coordination
 
 > Para "onde está a query X" veja `queries.md`. Para "como o roteamento/checkpoint dos agentes funciona" veja `agent-behavior.md`. Para telas veja `ui-flows.md`. Este arquivo é a visão geral e o "porquê" das decisões estruturais.
 
