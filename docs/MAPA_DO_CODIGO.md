@@ -1,6 +1,6 @@
 # Mapa do código — atlas-multi-agent-coordination
 
-> Também conhecida como: **Multi-Agent** (pasta antiga `atlas-multi-agent-coordination`). Portas: frontend 5191 / backend 8031.
+> Também conhecida como: **Multi-Agent** (pasta antiga `multiagente-atendimento`). Portas: frontend 5191 / backend 8031.
 > Em uma frase: um atendimento ao cliente com 8 agentes (1 orquestrador + 7 especialistas) em que o MongoDB Atlas é também o plano de coordenação: registro de agentes, regras de roteamento, handoffs, memória, cache, decisões e checkpoints do turno são documentos.
 
 Contexto geral nos briefings: `docs/briefing/architecture.md`, `docs/briefing/queries.md`, `docs/briefing/agent-behavior.md`, `docs/briefing/ui-flows.md`. Este mapa não os repete; ele diz onde cada coisa está no código.
