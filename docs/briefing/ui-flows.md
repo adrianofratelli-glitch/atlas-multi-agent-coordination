@@ -1,5 +1,7 @@
 # UI — telas, fluxos e componentes
 
+> Números de linha podem ficar defasados após mudanças: a fonte atualizada é [MAPA_DO_CODIGO.md](../MAPA_DO_CODIGO.md).
+
 Frontend é React + Vite, arquivo único principal `frontend/src/App.jsx` (441 linhas) + componentes em `frontend/src/components/`. 3 abas de navegação (`NAV` em `App.jsx:8`): **Chat**, **Decisões**, **Métricas**. Porta 5191, estrita.
 
 Screenshots de referência em `docs/screenshots/`: `01-chat-home.png`, `03-chain-timeline.png`, `04-agents-registry.png`, `05-metrics.png`, `06-guardrails.png`.

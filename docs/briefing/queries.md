@@ -1,8 +1,10 @@
 # Queries, aggregation pipelines e índices
 
+> Números de linha podem ficar defasados após mudanças: a fonte atualizada é [MAPA_DO_CODIGO.md](../MAPA_DO_CODIGO.md).
+
 Levantamento feito direto no código (`grep .aggregate(`, `.find(`, `create_index`, `find_one`, `find_many` em `backend/app/`), não de memória. Referências `arquivo:linha` correspondem ao estado do repo nesta revisão — confira a linha se o arquivo mudar.
 
-A maior parte das leituras/escritas simples passa pela abstração `DataStore` (`database.py`), que despacha para `pymongo` real ou para um backend em memória (`DEMO_MODE`) com o mesmo contrato. Esta seção documenta as **queries de negócio construídas em cima dessa abstração** e as **6 aggregation pipelines reais** do sistema (as únicas que usam `store.aggregate()` / `$vectorSearch` / `$search` / `$graphLookup` / `$rankFusion`).
+A maior parte das leituras/escritas simples passa pela abstração `DataStore` (`database.py`), que despacha para `pymongo` real ou para um backend em memória (`DEMO_MODE`) com o mesmo contrato. Esta seção documenta as **queries de negócio construídas em cima dessa abstração** e os **pipelines de agregação e busca** do sistema (`store.aggregate()`, `$vectorSearch`, `$search`, `$graphLookup`, `$rankFusion`, `$unionWith`, `$rerank`). As seções abaixo detalham as principais; o conjunto completo (cadeia de trocas, busca de produtos, RAG híbrido, denylist do guardrail, classificadores de escopo e de turno, cascata de cache com `$unionWith`, memória longa, série temporal de uso e change stream de handoffs) está na tabela de pipelines do [MAPA_DO_CODIGO.md](../MAPA_DO_CODIGO.md).
 
 ---
 
