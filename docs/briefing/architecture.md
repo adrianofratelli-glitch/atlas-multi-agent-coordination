@@ -70,6 +70,16 @@ Diagrama de topologia e sequência mais detalhado (Mermaid) já existe em `../ar
 - **Escrita é exceção, não regra**: das 7 agentes só 4 têm qualquer efeito de escrita (`order_agent`, `loyalty_agent`, `logistics_agent`, `support_agent`), e cada write é restrito a um allowlist de valores/campos aprovados — nunca um `$set` arbitrário vindo do LLM.
 - **Grafo é LangGraph, política é nossa**: o `StateGraph` cuida de fluxo e checkpoint; roteamento, guardrails, cache e budget ficam em módulos próprios, chamados pelos nós. O MongoDB segue sendo o plano de coordenação (registry, handoffs, traces, checkpoints).
 
+## Decisões de desenho
+
+Detalhes de implementação que vieram de medição ou de bug real e que não estão nos ADRs:
+
+- **O registry tem só os 8 agentes reais.** Se o `agent_registry` diz N agentes, N respondem. Uma iteração anterior inflou a contagem com documentos inertes para afirmar "100+ agentes"; isso foi revertido de propósito e não deve voltar.
+- **O handoff pós-escrita do `order_agent` roda mesmo sem mudança de status no turno.** Depender da mudança de estado dentro do turno fazia um "quero trocar" repetido (depois de outro turno ou caso de eval já ter mudado o pedido) perder o handoff para `billing_agent`/`logistics_agent` em silêncio.
+- **O `support_agent` só abre chamado em pedido explícito de escalonamento** ("atendente", "chamado", "escalar"), nunca por "sem evidência na KB": no `DEMO_MODE` o ranking local de fallback sempre devolve algum artigo, qualquer que seja a relevância.
+- **Colisão de palavra-chave no `cheap_route`.** No desempate por `priority`, uma palavra de um agente que vem *depois* na cadeia (ex.: "transportadora") pode vencer o gatilho do agente que vem *antes* (ex.: "troca") e pular o hop. Mensagens compostas da demo evitam a colisão ("entrega" em vez de "transportadora"). A checagem por substring exige as duas concordâncias de gênero ("parecido" e "parecida").
+- **Prompts de demo por identidade** (`DEMOS_BY_IDENTITY` em `App.jsx`) sempre acionam 2+ agentes, uma escrita real ou um guardrail — nunca uma leitura simples de um agente só.
+
 ## Segurança e isolamento
 
 - `customer_key` só existe no JWT; todo filtro de leitura/escrita é reconstruído no backend, nunca aceito do payload (`policies.py`).

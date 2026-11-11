@@ -216,4 +216,4 @@ Medido no Atlas (banco isolado `*_test`, três requisições idênticas em voo):
 
 ## Observabilidade da cadeia
 
-`build_turn_trace` (`langfuse_client.py`) grava **uma trace Langfuse por turno inteiro** — não por hop isolado — com um `span` por evento da timeline (roteamento, cache, cada hop de agente, handoff, guardrail) e uma `generation` por chamada real de LLM. Fail-open: sem chave Langfuse configurada vira no-op (`_NoopLangfuse`), nunca derruba o turno. `message`/`response` chegam já mascarados de PII antes de qualquer envio ao Langfuse. **Nunca mencionar Postgres em call/demo com cliente** — é infra interna do self-host do Langfuse, invisível ao valor da PoV.
+`build_turn_trace` (`langfuse_client.py`) grava **uma trace Langfuse por turno inteiro** — não por hop isolado — com um `span` por evento da timeline (roteamento, cache, cada hop de agente, handoff, guardrail) e uma `generation` por chamada real de LLM. Fail-open: sem chave Langfuse configurada vira no-op (`_NoopLangfuse`), nunca derruba o turno. `message`/`response` chegam já mascarados de PII antes de qualquer envio ao Langfuse.
