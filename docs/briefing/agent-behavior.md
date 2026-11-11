@@ -16,7 +16,7 @@ Verificação: `grep -rn "StateGraph\|MongoDBSaver\|add_conditional_edges" backe
 
 ## Os 8 "nós" do grafo
 
-Definidos como documentos em `multiagent_brain.agent_registry` (seed em `backend/app/seed_data.py:114-121`), carregados uma vez no início de cada turno (`orchestration.py:104-114`, `registry = {agent["agent_key"]: agent for agent in agents}`):
+Definidos como documentos em `multiagent_brain.agent_registry` (seed em `backend/app/seed_data.py:114-121`), carregados uma vez no início de cada turno (`orchestration_graph.py::n_ingest` (:131), `registry = {agent["agent_key"]: _no_id(agent) for agent in agents}`):
 
 | agent_key | Papel | Modelo | Tools | Budget (tokens/turno) | Escreve? |
 |---|---|---|---|---|---|
@@ -31,13 +31,13 @@ Definidos como documentos em `multiagent_brain.agent_registry` (seed em `backend
 
 **Config é dado, não código**: qualquer campo acima é editável em runtime via `PATCH /api/admin/agents/{agent_key}` (sem redeploy) — a tela "Agentes" no frontend edita literalmente esse documento.
 
-`WRITE_EFFECT_AGENTS = {"loyalty_agent", "order_agent", "logistics_agent", "support_agent"}` (`orchestration.py:54`) — para esses 4, uma checagem extra direto no banco roda antes de CADA runner no meio de uma cadeia de handoff (não só no início do turno), porque o `registry` carregado no início pode estar desatualizado se um admin desativar o agente no meio do turno. Agentes só-leitura confiam no snapshot do início, porque o custo da consulta extra não compensa ali.
+`WRITE_EFFECT_AGENTS = {"loyalty_agent", "order_agent", "logistics_agent", "support_agent"}` (`orchestration.py:89`) — para esses 4, uma checagem extra direto no banco roda antes de CADA runner no meio de uma cadeia de handoff (não só no início do turno), porque o `registry` carregado no início pode estar desatualizado se um admin desativar o agente no meio do turno. Agentes só-leitura confiam no snapshot do início, porque o custo da consulta extra não compensa ali.
 
 ---
 
 ## Roteamento (a aresta condicional de entrada)
 
-`backend/app/router.py`, chamado em `orchestration.py:118,151-193`.
+`backend/app/router.py`, chamado em `orchestration_graph.py::n_ingest` (`cheap_route` em :135) e `orchestration_graph.py::n_decide` (:266-308).
 
 1. **`cheap_route`** (determinístico, gratuito) — casa keywords normalizadas (sem acento, minúsculo) contra `routing_rules` (coleção seedada com `keywords`, `target_agent`, `priority`). Empates de prioridade+contagem entre agentes DIFERENTES retornam `None` (não decide sozinho, delega ao orquestrador). Prioridade primeiro, contagem de keyword como desempate — nessa ordem, para que uma intenção específica ("garantia") não perca para uma genérica que casa 2 palavras ("pedido" + "PED-").
 2. Se `cheap_route` não resolve: **`deterministic_orchestrator`** tenta por família de palavra (defeito → suporte, produto/categoria → produto, fatura → cobrança, fallback → pedido, confiança 0.55).
@@ -72,7 +72,7 @@ Fora de escopo emite um evento de timeline `guardrail` com `result.out_of_scope:
 
 ## O loop de handoff (o "grafo" em si)
 
-`orchestration.py:270-330`, dentro de `run_turn`.
+`orchestration_graph.py:493-587`, dentro do nó `n_handoff_chain` (o `run_turn` de `orchestration.py` só delega ao grafo).
 
 ```python
 current = target          # agente inicial, decidido pelo roteamento
@@ -106,7 +106,7 @@ for hop in range(MAX_HOPS):          # MAX_HOPS = 5
 
 Não há um `TypedDict`/`Pydantic State` compartilhado entre nós como num `StateGraph` real. O estado é reconstruído por turno em duas camadas:
 
-**`turn_context` (dict, transitório, só dentro do loop de hops)** — `orchestration.py:291-298`:
+**`turn_context` (dict, transitório, só dentro do loop de hops)** — `orchestration_graph.py:520-527`:
 ```python
 {
     "conversation_id": str,
@@ -115,6 +115,7 @@ Não há um `TypedDict`/`Pydantic State` compartilhado entre nós como num `Stat
     "handoff_path": list[str],           # trilha de agentes já visitados neste turno
     "visit_counts": dict[str, int],
     "returning_from": str | None,        # agente anterior, se for um revisit
+    "web_cfg": dict | None,              # configuração da busca web da área do cliente
 }
 ```
 
