@@ -72,6 +72,18 @@ No Atlas cluster? `DEMO_MODE=1 AUTH_REQUIRED=1 python run.py` runs the same cont
 
 The demo writes for real (facts, episodes, customer cache). The **"Reset demo memory"** button (`POST /api/demo/reset`, only the JWT's customer) undoes what it wrote and reactivates what it replaced, so the script can be repeated from scratch.
 
+## Docker
+
+One container: nginx serves the frontend build and proxies `/api` (path unchanged, SSE unbuffered) to a single uvicorn worker.
+
+```bash
+docker build -t multi-agent .                                    # without pov-shared (local fallbacks)
+docker build --build-context shared=../_shared -t multi-agent .  # with pov-shared, as in the author's workspace
+docker run --env-file .env -p 127.0.0.1:18031:8080 multi-agent   # http://127.0.0.1:18031
+```
+
+`docker run --env-file` does not strip quotes: a line `KEY="value"` arrives with the quotes, so write `KEY=value` in the file you pass. The frontend is built with a same-origin API base (`VITE_API_URL=""`), and no `VITE_ADMIN_KEY` is baked into the image, so the admin-only views (guardrail events, eval runs, agent edits, reviews) are rejected in the container. Health: `GET /api/health` (checks Atlas). Startup warmup calls the LLM; set `WARMUP_ON_START=0` to skip it.
+
 ## Tests
 
 ```bash

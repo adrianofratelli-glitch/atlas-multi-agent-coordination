@@ -6,7 +6,8 @@ async function boundedRequest(work, timeoutMs = 30000) {
   finally { clearTimeout(timer) }
 }
 
-const BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8031';
+// `??`, not `||`: the Docker image builds with VITE_API_URL="" (same origin behind nginx).
+const BASE = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8031';
 
 let token = localStorage.getItem('multi-agent-token') || '';
 
