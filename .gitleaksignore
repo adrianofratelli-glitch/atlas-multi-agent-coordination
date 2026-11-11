@@ -1,0 +1,2 @@
+# Falso positivo conferido em 2026-11-11: JWT_SECRET de exemplo ("troque...") no .env.example antigo.
+36a8933b5f4d271691d05a8c9b5c7b6392113313:.env.example:generic-api-key:4
