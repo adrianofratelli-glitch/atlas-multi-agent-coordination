@@ -102,5 +102,15 @@ def record_llm_usage(current, record: dict) -> None:
     for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
         if isinstance(record.get(key), int):
             current.set_attribute(f"llm.{key}", record[key])
+    # Convenções semânticas GenAI do OpenTelemetry (status "Development"): portáveis para Langfuse/Phoenix.
+    if isinstance(record.get("input_tokens"), int):
+        current.set_attribute("gen_ai.usage.input_tokens", record["input_tokens"]
+                              + int(record.get("cache_read_tokens") or 0) + int(record.get("cache_write_tokens") or 0))
+    if isinstance(record.get("output_tokens"), int):
+        current.set_attribute("gen_ai.usage.output_tokens", record["output_tokens"])
+    if record.get("model"):
+        current.set_attribute("gen_ai.response.model", record["model"])
+    if record.get("status") not in (None, "ok"):
+        current.set_attribute("error.type", str(record.get("error_type") or record["status"]))
     if isinstance(record.get("estimated_cost_usd"), (int, float)):
         current.set_attribute("llm.estimated_cost_usd", float(record["estimated_cost_usd"]))
