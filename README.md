@@ -82,6 +82,15 @@ docker build --build-context shared=../_shared -t multi-agent .  # with pov-shar
 docker run --env-file .env -p 127.0.0.1:18031:8080 multi-agent   # http://127.0.0.1:18031
 ```
 
+Prebuilt image (published to GHCR on every push to `main` that touches the image):
+
+```bash
+docker pull ghcr.io/adrianofratelli-glitch/atlas-multi-agent-coordination:latest
+docker run --env-file .env -p 127.0.0.1:8080:8080 ghcr.io/adrianofratelli-glitch/atlas-multi-agent-coordination:latest
+```
+
+Same `--env-file` rule as above (`KEY=value`, no quotes); tags: `latest` and `sha-<7-char commit>`. This image is built without pov-shared (local fallbacks), like `docker build -t multi-agent .`.
+
 `docker run --env-file` does not strip quotes: a line `KEY="value"` arrives with the quotes, so write `KEY=value` in the file you pass. The frontend is built with a same-origin API base (`VITE_API_URL=""`), and no `VITE_ADMIN_KEY` is baked into the image, so the admin-only views (guardrail events, eval runs, agent edits, reviews) are rejected in the container. Health: `GET /api/health` (checks Atlas). Startup warmup calls the LLM; set `WARMUP_ON_START=0` to skip it.
 
 ## Tests
