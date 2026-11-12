@@ -65,7 +65,7 @@ def entry_for(hop: int, agent: str, task: str | None, mode: str, actions: list[d
     return {"hop": hop, "agent": agent, "task": task or "", "mode": mode,
             "actions": [{**{k: v for k, v in item.items() if k in
                             ("tool", "effect", "changed", "summary", "simulated", "ticket_id",
-                             "blocked_by_recurrence", "already_open")}, "args": _safe_args(item.get("args"))}
+                             "blocked_by_recurrence", "already_open", "facts")}, "args": _safe_args(item.get("args"))}
                         for item in actions],
             "answer": answer, "handoff_to": handoff_to, "at": utcnow()}
 

@@ -71,3 +71,11 @@ tokens/turno. O custo do hop (~+180 ms) some na latência do LLM. Relatórios em
   `product_agent` roda sem rerank (comportamento anterior).
 - Cada turno de produto faz uma chamada à Voyage (cobrada pela MongoDB, não pelo cluster); custo
   e latência ficam no evento da timeline.
+
+## Reavaliação de status (2026-11-12)
+
+Doc do estágio `$rerank` (MongoDB 9.0+, só Atlas) conferida: a página do estágio não traz mais a faixa
+de Preview, mas os modelos `rerank-3`/`rerank-3-lite` seguem marcados como Preview no `$rerank`, e a
+Voyage marcou `rerank-2.5`/`rerank-2.5-lite` como Legacy em 2026-09-29. O rótulo conservador continua:
+"Public Preview nos rerank-3*". GA do estágio não foi confirmado por anúncio; trocar de modelo é dado
+(`retrieval.rerank.model`) e exige medir de novo (`eval_product_rerank.py`).

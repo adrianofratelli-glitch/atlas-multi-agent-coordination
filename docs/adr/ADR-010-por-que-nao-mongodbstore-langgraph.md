@@ -34,3 +34,12 @@ Manter a memória governada pelo servidor (`app/memory.py`), porque o contrato n
 - Checkpoint continua no `MongoDBSaver` (estado do grafo: o lugar certo do contrato do LangGraph).
 - Reavaliar se o store ganhar escrita condicional/transacional e recusa de namespace vazio. A PoV
   irmã chegou à mesma decisão (`../atlas-agent-intelligence-layer/docs/adr/ADR-012-por-que-nao-mongodbstore-langgraph.md`).
+
+## Reavaliação (2026-11-12)
+
+`langgraph-store-mongodb` 0.4.0 (2026-09) conferido no PyPI e no código: TTL em `updated_at`,
+busca vetorial com um único campo indexado, suporte a AutoEmbedding e `$rerank`. Continua **só
+síncrono** (`abatch` é `run_in_executor` sobre o pymongo síncrono) e sem escrita condicional ou
+transacional entre operações. As quatro razões acima seguem válidas; a decisão fica. A tela
+"Memória" mostra os três tipos (semântica em `customer_memory`, episódica em `long_term_memory`,
+procedural em `agent_registry`/`routing_rules`/`hitl_policies`) com `GET /api/memory-typed`.

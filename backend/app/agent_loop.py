@@ -51,10 +51,23 @@ TOOL_RULES = (
     "4. O quadro do turno é verdade: não contradiga, não repita e não diga que não encontrou algo que já está lá.\n"
     "5. Escritas (troca, reembolso, resgate, reagendamento, chamado) só quando o cliente pediu. Se a tool "
     "responder `aguardando_aprovacao_humana`, diga que um analista vai confirmar; se recusar, explique o motivo.\n"
+    "5b. O cliente NÃO vê o resultado das tools: escreva os fatos que respondem a sua parte (status, prazo, "
+    "valores, ids). Nunca diga 'está acima'.\n"
     "6. Seja econômico: chame de uma vez (na mesma rodada) as tools de que precisa; uma busca bem feita basta. "
     "Normalmente: 1 rodada de tools, depois o texto (e a transferência, se houver).\n"
     "7. Texto final curto, em português, sem saudação: 1 a 4 frases ou uma lista curta.\n\n" + GROUNDING_RULES
 )
+
+
+def pending_text(pending: dict) -> str:
+    """Texto do servidor para uma escrita pausada: nada foi alterado ainda (nunca "foi registrado")."""
+    label = PENDING_LABELS.get(pending["tool"], "operação")
+    if pending["tool"] == "request_order_status_change":
+        label = "reembolso" if pending["args"].get("status") == "reembolsado" else "troca"
+    target = pending["args"].get("order_id") or pending["args"].get("reward") or ""
+    review = f" (revisão {pending['review_id']})" if pending.get("review_id") else ""
+    return (f"O {label}{' do ' + target if target else ''} precisa da aprovação de um analista antes de ser feito"
+            f"{review}; por enquanto nada foi alterado. A decisão aparece aqui na conversa.")
 
 
 def tool_calling_enabled() -> bool:
@@ -85,7 +98,8 @@ async def run_tool_agent(*, store, llm, budget, agent_key: str, agent_doc: dict,
                          conversation_id: str, turn_context: dict, task: str | None, board_summary: str,
                          detected: dict[str, list[str]], handoff_targets: list[str], hitl_policies: list[dict],
                          extra_hint: str = "", simulate_writes: bool = False, tainted: bool = False,
-                         approved_action: dict | None = None, ctx_sink: list | None = None) -> AgentResult | None:
+                         approved_action: dict | None = None, ctx_sink: list | None = None,
+                         hold_writes: bool = False) -> AgentResult | None:
     if not (tool_calling_enabled() and llm is not None and getattr(llm, "anthropic_client", None) and agent_doc):
         return None
     specs = tools_module.tools_for(agent_doc, agent_key)
@@ -98,7 +112,7 @@ async def run_tool_agent(*, store, llm, budget, agent_key: str, agent_doc: dict,
     ctx = tools_module.ToolContext(store=store, customer=customer, message=message, conversation_id=conversation_id,
                                    agent_key=agent_key, agent_doc=agent_doc, turn_context=turn_context,
                                    hitl_policies=hitl_policies, simulate_writes=simulate_writes, tainted=tainted,
-                                   approved_action=approved_action)
+                                   approved_action=approved_action, hold_writes=hold_writes)
     if ctx_sink is not None:
         ctx_sink.append(ctx)
     others = {key: words for key, words in detected.items() if key != agent_key}
@@ -169,12 +183,7 @@ async def run_tool_agent(*, store, llm, budget, agent_key: str, agent_doc: dict,
                 # (medido: ~1 chamada a menos por agente na cadeia).
                 break
     if ctx.pending_action:
-        label = PENDING_LABELS.get(ctx.pending_action["tool"], "operação")
-        if ctx.pending_action["tool"] == "request_order_status_change":
-            label = "reembolso" if ctx.pending_action["args"].get("status") == "reembolsado" else "troca"
-        final_text = (f"Seu pedido de {label} foi registrado e está aguardando "
-                      f"a aprovação de um analista ({ctx.pending_action['reason']}). Assim que for decidido, "
-                      "a resposta aparece aqui na conversa.")
+        final_text = pending_text(ctx.pending_action)
     if not final_text:
         summaries = [a.get("summary") for a in ctx.actions if a.get("summary")]
         final_text = " ".join(summaries) or "Consultei os dados disponíveis, mas não consegui concluir esta etapa."

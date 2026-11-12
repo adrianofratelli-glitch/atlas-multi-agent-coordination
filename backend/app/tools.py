@@ -47,6 +47,7 @@ class ToolContext:
     simulate_writes: bool = False
     tainted: bool = False
     approved_action: dict | None = None   # ação já aprovada por humano (retomada do interrupt)
+    hold_writes: bool = False             # há escrita aguardando aprovação neste turno: as demais esperam
     events: list[TimelineEvent] = field(default_factory=list)
     actions: list[dict] = field(default_factory=list)
     pending_action: dict | None = None
@@ -174,12 +175,13 @@ async def _get_loyalty(ctx: ToolContext, args: dict) -> ToolResult:
     started = perf_counter()
     query = {"customer_key": ctx.customer["customer_key"]}
     clean = public_document(await ctx.store.find_one("loyalty_accounts", query))
+    catalog = [{"reward": key, "label": label, "points": cost} for key, (label, cost) in REWARD_CATALOG.items()]
     ctx.events.append(TimelineEvent(category="agent", title="Tool get_loyalty_account — saldo e tier",
                                     agent="loyalty_agent", collection="loyalty_accounts", op="read",
-                                    filter=query, result=clean or [], duration_ms=(perf_counter() - started) * 1000))
+                                    filter=query, result={**clean, "tabela_de_recompensas": catalog} if clean else [],
+                                    duration_ms=(perf_counter() - started) * 1000))
     if not clean:
         return ToolResult({"encontrado": False})
-    catalog = [{"reward": key, "label": label, "points": cost} for key, (label, cost) in REWARD_CATALOG.items()]
     return ToolResult({**clean, "tabela_de_recompensas": catalog})
 
 
@@ -252,6 +254,9 @@ async def _carrier_news(ctx: ToolContext, args: dict) -> ToolResult:
 # ---------------------------------------------------------------------------------------- writes
 
 def _write_gate(ctx: ToolContext, tool: str, intent_ok: bool, intent_hint: str) -> ToolResult | None:
+    if ctx.hold_writes and not ctx.approved_action:
+        return ToolResult({"executada": False, "motivo": "há uma operação deste turno aguardando aprovação humana; "
+                           "outras alterações ficam para depois da decisão"}, True)
     if ctx.tainted:
         return ToolResult({"executada": False, "motivo": "web_taint: o turno usou fonte externa; "
                            "escritas ficam para a próxima mensagem do cliente (ADR-005)"}, True)
@@ -482,8 +487,12 @@ async def execute(ctx: ToolContext, name: str, args: dict, call_id: str = "") ->
             from . import metrics as metrics_module
             await metrics_module.metrics.increment(f"tool.{name}.failures")
             return ToolResult({"erro": f"falha ao executar {name}: {type(exc).__name__}"}, True)
-    if spec.effect == "read" and not result.is_error:
-        ctx.actions.append({"tool": name, "effect": "read"})
+    if spec.effect in ("read", "external") and not result.is_error:
+        import json as _json
+        # Fatos lidos (dado do servidor, não texto de modelo) vão para a consolidação; o próximo agente
+        # vê só o nome da tool (`blackboard.summary_for_prompt`).
+        ctx.actions.append({"tool": name, "effect": spec.effect,
+                            "facts": _json.dumps(result.content, ensure_ascii=False, default=str)[:1500]})
     return result
 
 

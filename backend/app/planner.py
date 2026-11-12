@@ -55,7 +55,7 @@ async def plan_turn(*, llm, budget, orchestrator_doc: dict | None, message: str,
     catalog = "\n".join(f"- {key}: {labels.get(key, key)}" for key in available)
     context = PLANNER_RULES.format(catalog=catalog, max_steps=max_steps)
     try:
-        text, _ = await llm.complete(agent={**orchestrator_doc, "temperature": 0, "max_output_tokens": 500},
+        text, _ = await llm.complete(agent={**orchestrator_doc, "temperature": 0, "max_output_tokens": 800},
                                      user_message=message, dynamic_context=context, budget=budget)
     except Exception:  # noqa: BLE001 — plano é otimização de cobertura, nunca derruba o turno
         text = None

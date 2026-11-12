@@ -566,10 +566,13 @@ async def n_agent_hop(state: TurnState, config) -> dict:
     crash_at = config["configurable"].get("crash_before_hop")
     if crash_at is not None and hop == crash_at:
         raise SimulatedCrash(f"queda simulada antes do hop {hop}")
-    out: dict = {"next_agent": None, "next_task": None, "pending_action": None}
+    out: dict = {"next_agent": None, "next_task": None}
     runner = RUNNERS.get(current)
     if not runner:
         return out
+    if state.get("pending_action") and current in WRITE_EFFECT_AGENTS and not agent_loop.tool_calling_enabled():
+        tail.append("Outras alterações deste pedido ficam para depois da decisão do analista.")
+        return {**out, "tail_notes": tail}
     if state["web_tainted"] and current in WRITE_EFFECT_AGENTS:
         await metrics.increment("web.taint_blocked")
         tail.append("Para eu seguir com a próxima etapa, confirme o pedido numa nova mensagem — neste atendimento "
@@ -622,6 +625,7 @@ async def n_agent_hop(state: TurnState, config) -> dict:
                 message=masked, customer=customer, conversation_id=conversation_id, turn_context=turn_context,
                 task=state.get("next_task_in"), board_summary=board_summary, detected=state["detected"],
                 handoff_targets=targets, hitl_policies=state["hitl_policies"],
+                hold_writes=bool(state.get("pending_action")),
                 extra_hint=state["first_hint"] if hop == 0 else "", tainted=state["web_tainted"])
             if result is None:
                 # Provedor falhou no tool calling (erro/breaker): o template determinístico responde sem pagar
@@ -708,6 +712,11 @@ async def n_agent_hop(state: TurnState, config) -> dict:
                       "thread_id": state["thread_id"], "turn_id": state["turn_id"],
                       "kind": "hitl_interrupt"})
         pending["review_id"] = (review or {}).get("review_id")
+        from .agent_loop import pending_text
+        paused_text = pending_text(pending)
+        responses[-1] = paused_text
+        board[-1] = {**board[-1], "answer": paused_text}
+        update["responses"], update["board"] = responses, board
         timeline.append(TimelineEvent(category="agent", agent=current, collection="pending_reviews", op="write",
                                        title="Escrita pausada: aguarda aprovação humana (interrupt no checkpoint)",
                                        filter={"review_id": pending["review_id"]},
@@ -716,11 +725,20 @@ async def n_agent_hop(state: TurnState, config) -> dict:
                                        reason=pending.get("reason")))
         await blackboard.set_status(svc.store, turn_id=state["turn_id"], customer_key=customer["customer_key"],
                                     status="awaiting_approval", extra={"review_id": pending["review_id"]})
-        return {**update, "pending_action": pending, "timeline": timeline}
+        # A cadeia SEGUE os passos pendentes (leituras: entrega, fatura...) com escritas retidas; a pausa
+        # acontece antes da consolidação, para a resposta da pausa já cobrir o resto do pedido.
+        update["pending_action"] = pending
     if hop == MAX_HOPS - 1 or out.get("_budget_stop"):
         update.pop("_budget_stop", None)
         return update
     handoff_to, reason, task = result.handoff_to, result.handoff_reason, result.task_for_next
+    pending_steps = [s for s in state.get("plan") or [] if s["agent"] in registry
+                     and state["visit_counts"].get(s["agent"], 0) == 0 and s["agent"] != current]
+    if handoff_to and pending_steps and handoff_to != pending_steps[0]["agent"] \
+            and handoff_to in {s["agent"] for s in pending_steps}:
+        # O plano do orquestrador define a ORDEM (diagnóstico → recomendação → troca); a transferência do
+        # agente só escolhe destino fora do plano. Medido: o suporte pulava o produto e ia direto à troca.
+        handoff_to, reason, task = pending_steps[0]["agent"], f"plano do turno: {pending_steps[0]['task']}", None
     if not handoff_to:
         # Cobertura garantida pelo servidor: o agente terminou sem transferir, mas o plano tem passo pendente.
         step = next((s for s in state.get("plan") or [] if s["agent"] in registry
@@ -777,10 +795,10 @@ async def _record_handoff(svc, state, update, current, destination, reason, task
 
 
 def _route_after_hop(state: TurnState) -> str:
-    if state.get("pending_action"):
-        return "approval"
     if state.get("next_agent"):
         return "advance"
+    if state.get("pending_action"):
+        return "approval"
     return "consolidate"
 
 
@@ -842,24 +860,13 @@ async def n_apply_approved(state: TurnState, config) -> dict:
                                    title="Turno retomado do checkpoint após decisão humana",
                                    filter={"review_id": pending.get("review_id")},
                                    result={"approved": approved, "tool": pending["tool"]}))
-    if responses:
-        responses[-1] = text
     entry = blackboard.entry_for(pending["hop"], pending["agent"], "decisão humana", "human_in_the_loop", actions, text)
     await blackboard.append_entry(svc.store, turn_id=state["turn_id"], customer_key=customer["customer_key"], entry=entry)
-    board = [*state["board"][:-1], {**state["board"][-1], "answer": text, "actions": entry["actions"]}] if state["board"] else [entry]
-    update = {"responses": responses, "board": board, "timeline": timeline, "pending_action": None,
-              "resumed": True, "next_agent": None}
-    if approved and pending.get("handoff_to") and pending["handoff_to"] in state["registry"]:
-        visit_counts = dict(state["visit_counts"])
-        if visit_counts.get(pending["handoff_to"], 0) == 0:
-            return await _record_handoff(svc, state, {**update, "tail_notes": state["tail_notes"]}, pending["agent"],
-                                         pending["handoff_to"], pending.get("handoff_reason"),
-                                         pending.get("task_for_next"), False, visit_counts)
-    return update
-
-
-def _route_after_approval(state: TurnState) -> str:
-    return "advance" if state.get("next_agent") else "consolidate"
+    board = [{**item, "answer": text, "actions": entry["actions"]} if item.get("hop") == pending["hop"] else item
+             for item in state["board"]] or [entry]
+    # A cadeia já rodou os passos restantes antes da pausa: daqui vai direto à consolidação.
+    return {"responses": responses, "board": board, "timeline": timeline, "pending_action": None,
+            "resumed": True, "next_agent": None}
 
 
 async def n_consolidate(state: TurnState, config) -> dict:
@@ -967,7 +974,7 @@ def _build_graph(settings):
                                   {"approval": "approval", "advance": "advance", "consolidate": "consolidate"})
     builder.add_edge("advance", "agent_hop")
     builder.add_edge("approval", "apply_approved")
-    builder.add_conditional_edges("apply_approved", _route_after_approval, {"advance": "advance", "consolidate": "consolidate"})
+    builder.add_edge("apply_approved", "consolidate")
     builder.add_edge("consolidate", "finalize")
     for terminal in ("blocked", "fanout", "out_of_scope", "cache_hit", "finalize"):
         builder.add_edge(terminal, END)

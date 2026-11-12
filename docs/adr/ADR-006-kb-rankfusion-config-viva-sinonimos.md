@@ -88,3 +88,11 @@ e é neutro com sinônimos; fica ligado por pedido explícito e desligável por 
   0,933/0,967/0,950), sem erro para o cliente.
 - Caos LIVE (`scripts/chaos_suite.py kb_*`): sinônimos recusados, `$rankFusion` recusado, índice
   lexical em BUILDING, `$rerank` recusado e maxTimeMS — 5/5 com o artigo certo entre os 4 do agente.
+
+## `$scoreFusion` medido (2026-11-12)
+
+`retrieval.fusion.method: "score"` troca a fusão por `$scoreFusion` (MongoDB 8.3+, `minMaxScaler`). No
+mesmo KB e nas mesmas 30 consultas: MRR 0,872 e recall@1 0,80, contra 0,983 e 0,967 do `$rankFusion`
+(`eval/reports/kb-retrieval-{rankfusion,scorefusion}-2026-11-12.json`). Com poucos artigos curtos, o
+BM25 normalizado puxa demais o artigo que repete a palavra; o RRF, que só olha a posição, é mais
+estável. O padrão continua `$rankFusion`; o método fica como dado para medir de novo com uma base maior.

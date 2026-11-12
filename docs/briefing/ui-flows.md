@@ -2,11 +2,11 @@
 
 > Números de linha podem ficar defasados após mudanças: a fonte atualizada é [MAPA_DO_CODIGO.md](../MAPA_DO_CODIGO.md).
 
-Frontend é React + Vite: `frontend/src/App.jsx` guarda o estado da sessão e a navegação; cada tela e painel é um componente em `frontend/src/components/`, e a lógica pura (grafo, capô, custo) mora em `graphModel.js`, `mongoOps.js` e `costs.js`, com testes em `frontend/tests/`. 5 abas (`NAV` em `App.jsx:12`, contrato de UI: no máximo cinco destinos): **Chat**, **A/B**, **Agentes** (inclui Guardrails), **Decisões**, **Métricas**. Porta 5191, estrita.
+Frontend é React + Vite: `frontend/src/App.jsx` guarda o estado da sessão e a navegação; cada tela e painel é um componente em `frontend/src/components/`, e a lógica pura (grafo, capô, custo) mora em `graphModel.js`, `mongoOps.js` e `costs.js`, com testes em `frontend/tests/`. 5 abas (`App.jsx::NAV`, contrato de UI: no máximo cinco destinos): **Chat**, **A/B**, **Agentes** (inclui Guardrails), **Decisões**, **Métricas**. Porta 5191, estrita.
 
-Screenshots de referência em `docs/screenshots/`: `01-chat-home.png`, `03-chain-timeline.png`, `04-agents-registry.png`, `05-metrics.png`, `06-guardrails.png` (anteriores à tela de coordenação de 2026-11).
+Screenshots de referência em `docs/screenshots/`: `01-chat-home.png`, `03-chain-timeline.png`, `04-agents-registry.png`, `05-metrics.png`, `06-guardrails.png` (anteriores à tela de coordenação de 2026-11; serão recapturados com os mesmos nomes). O README também referencia `07-ab-compare.png` (aba A/B) e `08-hitl-approval.png` (escrita pausada), ainda a capturar.
 
-## Barra superior (`App.jsx:300`, sempre visível)
+## Barra superior (`App.jsx`, `nav.top-nav`, sempre visível)
 
 - Marca "MongoDB Agent Control Plane" (clicável, volta para Chat).
 - Seletor de **identidade** — troca entre 4 clientes fixos de demo (`ana`, `bruno`, `carla`, `diego`), cada um com pedidos/faturas/fidelidade reais no seed.
@@ -28,7 +28,7 @@ Três colunas que cabem na viewport (a conversa nunca é empurrada para baixo da
    - **Custo** (`CostPanel.jsx::TurnCost`): custo estimado, HIT/MISS da cascata semântica, prompt cache do provedor e `llm_calls` agrupadas por agente (custo desconhecido aparece como "não informado", nunca zero).
    - **Memória** (`TypedMemory.jsx`): `GET /api/memory-typed` — semântica (`customer_memory`), episódica (`long_term_memory`, só rótulos) e procedural (`agent_registry`, `routing_rules`, `hitl_policies`).
 6. **Escrita sensível pausada (HITL)**: quando o resultado traz `awaiting_approval`, a resposta ganha o cartão "Aguardando analista" (review id, tool, argumentos, motivo) e o botão para abrir a fila. Quando o analista decide, o handoff `human_reviewer → agente` chega pelo Change Stream e o chat relê `GET /api/conversations/latest` até a resposta retomada aparecer (marcada "após decisão humana"); se a decisão foi tomada nesta mesma aba, o `resumed_turn` do resolve entra direto.
-7. **"Simular queda e retomar do checkpoint"** (`App.jsx:248`): abre uma conversa nova e chama `POST /api/demo/crash-resume` (usa o texto da caixa ou uma cadeia pedido → logística → pedido da identidade). O diálogo (`CrashResume.jsx`) mostra a queda, `checkpoint_id`, próximo nó e hops concluídos antes da retomada, o caminho retomado e a conferência em `GET /api/handoffs` de que nenhum handoff foi gravado duas vezes.
+7. **"Simular queda e retomar do checkpoint"** (`App.jsx::simulateCrash`): abre uma conversa nova e chama `POST /api/demo/crash-resume` (usa o texto da caixa ou uma cadeia pedido → logística → pedido da identidade). O diálogo (`CrashResume.jsx`) mostra a queda, `checkpoint_id`, próximo nó e hops concluídos antes da retomada, o caminho retomado e a conferência em `GET /api/handoffs` de que nenhum handoff foi gravado duas vezes.
 8. Chips de **"posso seguir com"** — sugestões de próximo turno, numa linha rolável, cada uma com a mensagem exata que dispara aquele fluxo.
 
 **Roteiros de demo por identidade** (`GET /api/demo-scenarios`, ordenados por `position`): além dos cenários multiagente, cada uma das 4 identidades tem 6 chips que exercitam as três camadas de memória e o cache (`seed_data.py:MEMORY_DEMOS`, campo `demo_kind`):

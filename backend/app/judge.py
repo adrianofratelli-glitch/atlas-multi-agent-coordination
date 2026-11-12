@@ -16,7 +16,7 @@ from .budget import TurnBudget
 JUDGE_DOC = {
     "agent_key": "judge", "label": "Juiz", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5",
     "persona": "Você é um avaliador rigoroso de respostas de atendimento ao cliente.",
-    "max_turn_tokens": 30000, "max_output_tokens": 600, "temperature": 0, "active": True,
+    "max_turn_tokens": 40000, "max_output_tokens": 600, "temperature": 0, "active": True,
 }
 
 JUDGE_RULES = (
@@ -43,7 +43,7 @@ async def judge(llm, message: str, response: str, evidence) -> dict:
     if not (llm and getattr(llm, "client", None)):
         return {"available": False}
     budget = TurnBudget(JUDGE_DOC["max_turn_tokens"], {"judge": JUDGE_DOC["max_turn_tokens"]})
-    context = JUDGE_RULES + "\n\nEVIDÊNCIA:\n" + json.dumps(evidence, ensure_ascii=False, default=str)[:9000]
+    context = JUDGE_RULES + "\n\nEVIDÊNCIA:\n" + json.dumps(evidence, ensure_ascii=False, default=str)[:16000]
     try:
         text, _ = await llm.complete(agent=JUDGE_DOC, user_message=f"MENSAGEM: {message}\n\nRESPOSTA: {response}",
                                      dynamic_context=context, budget=budget)

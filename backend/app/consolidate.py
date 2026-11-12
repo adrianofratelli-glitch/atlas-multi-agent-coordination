@@ -17,6 +17,9 @@ CONSOLIDATE_RULES = (
     "especialista fez e respondeu. Escreva UMA resposta final ao cliente, em português, que:\n"
     "- cubra todas as partes do pedido, na ordem em que o cliente pediu;\n"
     "- use SOMENTE fatos do quadro (nunca invente status, prazo, preço, produto, link ou número);\n"
+    "- use os 'fatos_lidos' (dados do banco) para completar o que um especialista deixou de dizer;\n"
+    "- só diga que algo foi registrado/alterado/aberto se estiver em 'escritas'; operação pendente de aprovação "
+    "NÃO foi feita; não diga que um produto substitui outro se nenhuma escrita disser isso;\n"
     "- trate como verdade as escritas efetivadas; se alguma frase de um especialista contradiz uma escrita "
     "efetivada (ex.: 'não encontrei registro de troca' depois de a troca ter sido registrada), descarte a frase;\n"
     "- mantenha identificadores (PED-, FAT-, TCK-, REV-), valores, datas e as linhas de fontes/links;\n"
@@ -45,7 +48,9 @@ async def consolidate(*, llm, budget, orchestrator_doc: dict | None, message: st
                                        title="Consolidação determinística (um agente ou sem modelo)",
                                        collection="turn_blackboard", op="read",
                                        result={"mode": "deterministic", "entries": len(entries)})
-    board = [{"agente": e["agent"], "tarefa": e.get("task"), "escritas": [a for a in e.get("actions", []) if a.get("effect") == "write"],
+    board = [{"agente": e["agent"], "tarefa": e.get("task"),
+              "escritas": [{k: v for k, v in a.items() if k != "facts"} for a in e.get("actions", []) if a.get("effect") == "write"],
+              "fatos_lidos": [a.get("facts") for a in e.get("actions", []) if a.get("facts")][:3],
               "resposta_do_especialista": e.get("answer", "")} for e in entries]
     context = (CONSOLIDATE_RULES + "\n\nQUADRO DO TURNO:\n" + json.dumps(board, ensure_ascii=False, default=str)
                + ("\n\nAVISOS DO SISTEMA (inclua no fim, com suas palavras): " + " | ".join(t for t in tail if t) if any(tail) else ""))

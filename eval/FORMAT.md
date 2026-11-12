@@ -99,3 +99,51 @@ O `summary` carrega também `embedding_classifiers`: duas sondas (`scope_classif
 embedding é o mesmo — mas o relatório PROVA isso em vez de afirmar: em `demo` (offline) o campo
 sai `method: fallback` e o texto avisa, em letras, que os números não cobrem esse caminho. Um
 "100%" sem essa linha não diz qual classificador foi exercitado.
+
+## Eval de resposta — `eval/answer_dataset.json` + `backend/eval_answers.py`
+
+Por que existe: os evals acima medem rota e número de handoffs. Em 12/11/2026 uma resposta
+concatenada e contraditória ("não encontrei a troca" + "troca registrada") passou 29/29. Este eval
+julga o que o cliente recebe e repete cada caso k vezes para medir **consistência**.
+
+Dataset (mesmos campos de topo: `synthetic`, `generated_by`, `limitation`), ~10 casos tirados de
+`DEMO_SCENARIOS`/`EVAL_CASES` (`app/seed_data.py`):
+
+| Campo | Obrigatório | Significado |
+|---|---|---|
+| `id`, `customer`, `message` | sim | como acima |
+| `expected_agents` | sim | conjunto que precisa aparecer no caminho do turno (`agent_path`, ou agentes da timeline); `[]` para bloqueio/fora de escopo |
+| `strict_order` | não (false) | além do conjunto, `expected_agents` tem de ser subsequência do caminho (revisita permitida) |
+| `forbidden_agents` | não | nenhum deles pode aparecer no caminho |
+| `max_agents` | não | teto de especialistas distintos (pega plano inflado em pergunta simples) |
+| `expect_awaiting_approval` | não (false) | o turno tem de PAUSAR no HITL; pausa inesperada também reprova |
+| `expect_blocked` / `expect_out_of_scope` | não (false) | bloqueio do guardrail / orientação de escopo, sem agente |
+| `expect_state` | não | conferência no banco depois do turno: `{collection, filter, field, equals}` ou `{collection, filter, min_count / max_count}` (escrita que devia — ou não devia — acontecer) |
+| `min_judge` | não (4,0) | piso da média do juiz; `null` dispensa o juiz (respostas fixas de bloqueio/escopo) |
+| `offline_script` | não | rodadas de tool do LLM roteirizado do `--offline` (`{agente: [{tool, args} \| {text}]}`) |
+
+Métricas, por trial: **trajetória** (todas as checagens de caminho), **efeito** (`expect_state`),
+**juiz** (`app/judge.py`: completude, coerência e grounding 1–5 contra a evidência da timeline),
+latência do turno, tokens e custo (`response.economics`; o custo do juiz vai à parte). Um trial passa
+quando tudo passa. Por caso e no total:
+
+* **pass@k** — pelo menos um dos k trials passou (capacidade);
+* **pass^k** — os k trials passaram (consistência; é o número que importa para atendimento).
+  Com n trials e c sucessos, os estimadores sem viés são `1 − C(n−c,k)/C(n,k)` e `C(c,k)/C(n,k)`;
+  com k = n viram os valores empíricos (referência: Anthropic, "Demystifying evals for AI agents").
+
+Estado: antes de cada trial o banco de TESTE volta ao seed nas coleções que um turno altera
+(pedidos, faturas, entregas, pontos) e perde resgates, chamados, decisões, casos pausados, cache,
+curto prazo, frases aprendidas do guardrail e a memória da demo dos clientes; cada trial usa uma
+conversa nova. Por isso o cache semântico está sempre FRIO nesta medição (custo de pior caso).
+
+```bash
+cd backend && ../.venv/bin/python eval_answers.py --offline          # LLM roteirizado, sem rede (CI)
+cd backend && MONGODB_DB=multi_agent_poc_test MONGODB_BRAIN_DB=multiagent_brain_test \
+    ../.venv/bin/python eval_answers.py --trials 3 --json hoje.json --compare ontem.json [--case ID]
+```
+
+O modo live recusa o banco da demo (`scripts/isolation.py`), imprime a tabela por caso, grava o
+JSON e um documento em `eval_runs` com `kind: "answers"` no mesmo banco. Custo de referência: um turno
+multiagente ~US$ 0,25 e ~40 s. `--offline` valida o harness e os portões do servidor (escrita, HITL,
+bloqueio), não a redação: o juiz devolve nota fixa. O código de saída é 0 só com pass^k = 100%.
