@@ -76,6 +76,15 @@ function ReviewQueue({ adminMode, onResolved, onResumed, labels = {}, refreshKey
   const resumedCard = resumed && (
     <article className="resumed-card" aria-live="polite">
       <h4>{resumed.decision === 'approve' ? 'Escrita aprovada' : 'Escrita recusada'}: {resumed.turn ? 'turno retomado do checkpoint' : (resumed.note || 'decisão gravada')}</h4>
+      {!resumed.turn && <button type="button" className="ghost-btn" onClick={async () => {
+        try {
+          const turn = await api.continueReview(resumed.review.review_id);
+          setResumed((current) => ({ ...current, turn }));
+          onResumed?.(turn);
+        } catch (err) {
+          setResumed((current) => ({ ...current, note: err.message }));
+        }
+      }}>Continuar turno</button>}
       <p className="resumed-meta"><code>{resumed.review.review_id}</code> · {labels[resumed.review.agent] || resumed.review.agent} · conversa <code>{resumed.review.conversation_id}</code></p>
       {resumed.turn
         ? <div className="resumed-answer"><RichText text={resumed.turn.response} /></div>

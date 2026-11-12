@@ -82,23 +82,34 @@ def _order_id(args: dict, ctx: ToolContext) -> tuple[str | None, bool]:
     return ctx.turn_context.get("active_order_id"), False
 
 
-# Pergunta de INFORMAÇÃO ("como faço para trocar?") não é pedido; pedido educado ("pode trocar?",
-# "dá pra reagendar?") é. Vírgula separa cláusulas ("quero o reembolso, como fica a fatura?").
+# Pedido x pergunta (revisões de 2026-11-12). Por cláusula (frases cortadas em . ; ! ? e cláusulas na vírgula):
+# - pergunta de informação ("como faço para trocar?"), condicional/hipótese ("se eu trocar, perco a
+#   garantia?", "caso eu peça reembolso, ...") e negação ("não quero trocar", "troca não") NÃO são pedido;
+# - a última cláusula de uma frase terminada em "?" só é pedido se começar como pedido ("pode trocar?",
+#   "dá pra reagendar?", "quero trocar o PED-1001?"); "quero entender, a troca é gratuita?" não é.
 _QUESTION_START = re.compile(r"^(e )?(como|quanto|quantos|quanta|qual|quais|quando|onde|por que|porque|o que|"
                              r"sera que|existe|existem)\b")
+_CONDITIONAL_START = re.compile(r"^(e )?(se|caso|supondo|imagina|imagine|na hipotese)\b")
+_REQUEST_START = re.compile(r"^(por favor )?(voce |voces )?(pode|podem|poderia|poderiam|consegue|conseguem|"
+                            r"da pra|da para|quero|queria|gostaria|preciso|solicito|favor)\b")
 _NEGATED = re.compile(r"\b(nao|nunca|jamais) (quero |vou |preciso |precisa |pode |deve )?"
-                      r"(troc|reembols|resgat|reagend|cancel|abrir|abra)")
+                      r"(troc|reembols|resgat|reagend|cancel|abrir|abra)|"
+                      r"\b(troca|reembolso|resgate|reagendamento|chamado)\s+nao\b")
 _POINTS_SWAP = re.compile(r"troc\w*\s+(os\s+|meus\s+|minhas\s+)?pontos")
 
 
 def _clauses(message: str) -> list[tuple[str, bool]]:
-    """(cláusula normalizada, é pergunta?) — a pergunta "como faço para trocar?" não é pedido de troca."""
-    parts = re.split(r"(?<=[.!?;,])\s+|\n+", message.strip())
+    """(cláusula normalizada, NÃO é pedido?)."""
     out = []
-    for part in parts:
-        norm = normalize(part).strip(" ,.;!?")
-        if norm:
-            out.append((norm, bool(_QUESTION_START.match(norm)) or bool(_NEGATED.search(norm))))
+    for sentence in re.findall(r"[^.;!?\n]+[.;!?]*", message.strip()):
+        is_question = sentence.strip().endswith("?")
+        parts = [normalize(part).strip(" ,.;!?") for part in sentence.split(",")]
+        parts = [part for part in parts if part]
+        for index, norm in enumerate(parts):
+            not_request = bool(_QUESTION_START.match(norm) or _CONDITIONAL_START.match(norm) or _NEGATED.search(norm))
+            if is_question and index == len(parts) - 1 and not _REQUEST_START.match(norm):
+                not_request = True
+            out.append((norm, not_request))
     return out
 
 
@@ -115,6 +126,17 @@ def _wants_status(message: str, status: str) -> bool:
         if _requested_status(clause) == status:
             return True
     return False
+
+
+def requested_status(message: str) -> str | None:
+    """Status pedido de verdade (1ª cláusula que é pedido): "troca não, quero reembolso" → reembolsado."""
+    from .agents import _requested_status
+    for clause, not_request in _clauses(message):
+        if not not_request and not _POINTS_SWAP.search(clause):
+            status = _requested_status(clause)
+            if status:
+                return status
+    return None
 
 
 def _cited_orders(message: str) -> set[str]:
@@ -509,10 +531,10 @@ async def execute(ctx: ToolContext, name: str, args: dict, call_id: str = "") ->
 def explicit_write_intents(message: str, tool_names: list[str]) -> list[str]:
     """Os MESMOS sinais que os portões de escrita usam, ditos ao modelo antes: o servidor sabe que o cliente
     pediu "troca"; o agente não pode esquecer de efetivar (medido: às vezes só consultava e transferia)."""
-    from .agents import REWARD_CATALOG, _requested_status
+    from .agents import REWARD_CATALOG
     found = []
-    status = _requested_status(message)
-    if status and "request_order_status_change" in tool_names and _wants_status(message, status):
+    status = requested_status(message)
+    if status and "request_order_status_change" in tool_names:
         found.append(f"request_order_status_change com status '{status}'")
     reward = next((key for key in REWARD_CATALOG if _wants(message, (key,))), None)
     if reward and "redeem_reward" in tool_names:

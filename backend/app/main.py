@@ -611,7 +611,8 @@ async def resolve_pending_review(request: Request, review_id: str, payload: Revi
         resolved["resumed_turn"] = output.model_dump(mode="json") if output else None
         if output is None:
             # A cadeia ainda não chegou ao ponto de aprovação: a decisão gravada é lida lá (n_approval).
-            resolved["resume_note"] = "decisão gravada; o turno aplica ao chegar no ponto de aprovação"
+            resolved["resume_note"] = ("decisão gravada; o turno aplica ao chegar no ponto de aprovação "
+                                       "(se não aparecer, use Continuar turno)")
         if output:
             # Avisa a tela do cliente DEPOIS de a resposta retomada estar gravada (o handoff do revisor,
             # gravado na transação da decisão, chega antes dela).

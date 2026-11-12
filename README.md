@@ -174,7 +174,7 @@ TOKEN=$(curl -s -X POST http://127.0.0.1:8031/api/auth/token -H 'Content-Type: a
   -d '{"customer_key":"ana"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
 MCP_CUSTOMER_TOKEN=$TOKEN .venv/bin/python backend/mcp_server.py      # stdio
 
-# register it in Claude Code
+# register it in an MCP client
 claude mcp add atlas-multi-agent --env MCP_CUSTOMER_TOKEN=$TOKEN -- .venv/bin/python backend/mcp_server.py
 ```
 

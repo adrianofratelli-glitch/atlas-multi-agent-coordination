@@ -82,6 +82,8 @@ export const api = {
   updateHitlPolicy: (policyId, active) => request(`/api/admin/hitl-policies/${encodeURIComponent(policyId)}`, {
     method: 'PATCH', headers: ADMIN(), body: JSON.stringify({ active }),
   }),
+  continueReview: (reviewId) => request(`/api/admin/reviews/${encodeURIComponent(reviewId)}/continue`, {
+    method: 'POST', headers: ADMIN() }),
   approveGuardrailCandidate: (candidateId) => request(`/api/admin/guardrails/candidates/${encodeURIComponent(candidateId)}/approve`, {
     method: 'POST', headers: ADMIN(),
   }),

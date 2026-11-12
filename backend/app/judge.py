@@ -43,7 +43,14 @@ async def judge(llm, message: str, response: str, evidence) -> dict:
     if not (llm and getattr(llm, "client", None)):
         return {"available": False}
     budget = TurnBudget(JUDGE_DOC["max_turn_tokens"], {"judge": JUDGE_DOC["max_turn_tokens"]})
-    context = JUDGE_RULES + "\n\nEVIDÊNCIA:\n" + json.dumps(evidence, ensure_ascii=False, default=str)[:16000]
+    from .clock import clock_block
+    from .tools import TOOLS
+    # O agente recebe a data de hoje e oferece o que as tools permitem: o juiz precisa dos MESMOS fatos do
+    # servidor, senão pune "hoje é 12/11" ou "posso reagendar" como invenção (medido no eval de 2026-11-12).
+    capabilities = sorted(f"{spec.name} ({spec.agent})" for spec in TOOLS.values())
+    context = (JUDGE_RULES + f"\n\nFATOS DO SERVIDOR (válidos como evidência): {clock_block()} "
+               "Ferramentas que o atendimento pode oferecer: " + ", ".join(capabilities)
+               + "\n\nEVIDÊNCIA:\n" + json.dumps(evidence, ensure_ascii=False, default=str)[:16000])
     try:
         text, _ = await llm.complete(agent=JUDGE_DOC, user_message=f"MENSAGEM: {message}\n\nRESPOSTA: {response}",
                                      dynamic_context=context, budget=budget)

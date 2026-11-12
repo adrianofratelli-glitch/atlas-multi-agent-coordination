@@ -552,10 +552,16 @@ async def test_analista_decide_antes_do_interrupt_e_o_turno_aplica_ao_chegar():
     ("como faço para trocar o PED-1001?", False),
     ("não quero trocar o PED-1001", False),
     ("quero trocar meus pontos", False),
+    ("se eu trocar, perco a garantia?", False),
+    ("e se eu quiser trocar, como faço?", False),
+    ("quero entender, a troca é gratuita?", False),
+    ("caso eu peça reembolso, quanto tempo demora?", False),
+    ("troca não, quero reembolso do PED-1001", True),
+    ("dá pra trocar o PED-1001?", True),
+    ("quero trocar o PED-1001?", True),
 ])
 async def test_portao_de_intencao_separa_pedido_de_pergunta(message, expected):
-    from app.agents import _requested_status
-    status = _requested_status(message)
+    status = tools_module.requested_status(message)
     assert bool(status and tools_module._wants_status(message, status)) is expected
 
 
@@ -571,3 +577,39 @@ async def test_conteudo_web_nao_vira_fato_para_a_consolidacao(monkeypatch):
     ctx = _ctx(store, "onde está o PED-1001?", turn_context={"web_cfg": {"enabled": True}})
     await tools_module.execute(ctx, "search_carrier_news", {"order_id": "PED-1001"})
     assert all("facts" not in action for action in ctx.actions if action["tool"] == "search_carrier_news")
+
+
+
+async def test_troca_nao_quero_reembolso_e_reembolso():
+    message = "troca não, quero reembolso do PED-1001"
+    assert tools_module._wants_status(message, "reembolsado")
+    assert not tools_module._wants_status(message, "troca_solicitada")
+
+
+def test_reagendamento_condicional_nao_e_pedido():
+    assert not tools_module._wants("Se precisar reagendar, como funciona?", tools_module.RESCHEDULE_TERMS)
+    assert tools_module._wants("dá pra reagendar a entrega pra outro dia?", tools_module.RESCHEDULE_TERMS)
+
+
+async def test_continue_retoma_escrita_aprovada_que_falhou(monkeypatch):
+    """Falha transitória na escrita aprovada deixa o nó apply_approved retomável; a 2ª tentativa escreve uma vez."""
+    store, _, service = await _world(_refund_script())
+    paused = await orchestration_graph.run_turn(service, "quero reembolso do pedido PED-1001", ANA, _conv())
+    review = await store.find_one("pending_reviews", {"review_id": paused.awaiting_approval["review_id"]})
+    thread = review["evidence"]["thread_id"]
+    real_execute, calls = tools_module.execute, {"n": 0}
+
+    async def flaky(ctx, name, args, call_id=""):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return tools_module.ToolResult({"erro": f"falha ao executar {name}: AutoReconnect"}, True)
+        return await real_execute(ctx, name, args, call_id)
+
+    monkeypatch.setattr(tools_module, "execute", flaky)
+    with pytest.raises(RuntimeError):
+        await orchestration_graph.resume_turn(service, thread, {"approved": True}, review_id=review["review_id"])
+    assert (await _order(store, "PED-1001"))["status"] == "enviado"
+    done = await orchestration_graph.continue_thread(service, thread)
+    assert done is not None and (await _order(store, "PED-1001"))["status"] == "reembolsado"
+    assert await _decisions(store, "PED-1001") == 1
+    assert await orchestration_graph.continue_thread(service, thread) is None

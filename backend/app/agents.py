@@ -210,11 +210,9 @@ async def run_order_agent(store: DataStore, message: str, customer: dict, llm=No
     explicit_order_id = extract_id(message, "PED")
     order_id = explicit_order_id or (context or {}).get("active_order_id")
     clean, query = await load_order(store, customer, order_id, bool(explicit_order_id))
-    requested_status = _requested_status(message) if clean else None
-    if requested_status:
-        # Mesmo portão das tools: pergunta ("como faço para trocar?") e "trocar meus pontos" não são pedido.
-        from .tools import _wants_status
-        requested_status = requested_status if _wants_status(message, requested_status) else None
+    # Mesmo portão das tools: pergunta, condicional, negação e "trocar meus pontos" não são pedido.
+    from .tools import requested_status as gated_status
+    requested_status = gated_status(message) if clean else None
     if not clean:
         # Beco sem saída vira orientação ancorada em dado real: lista os pedidos que
         # ESTA identidade tem de fato, em vez de mandar o cliente "conferir o número".
