@@ -3,12 +3,17 @@
 Os nomes e atributos seguem semantic-conventions-genai (status "Development"), para que a trace de
 um turno seja lida por Langfuse/Phoenix/qualquer backend OTel sem mapeamento próprio."""
 
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+import pytest
 
-from app import observability
-from tests.test_agentic_core import ANA, _conv, _world, msg, text, use
+# O SDK do OpenTelemetry é opcional (TRACE_SINK desligado por padrão); sem ele, o teste é pulado.
+pytest.importorskip("opentelemetry.sdk")
+
+from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: E402
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter  # noqa: E402
+
+from app import observability  # noqa: E402
+from tests.test_agentic_core import ANA, _conv, _world, msg, text, use  # noqa: E402
 
 
 async def test_turno_com_tool_calling_emite_spans_genai(monkeypatch):
