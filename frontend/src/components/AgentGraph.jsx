@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { layoutGraph, edgePath, rectReach, describeTurn, HUB } from '../graphModel.js';
+import { layoutGraph, edgePath, rectReach, describeTurn, fitText, nodeSubtitle, HUB } from '../graphModel.js';
 import { useReducedMotion } from '../hooks.js';
 
 const VIEW = { width: 700, height: 370 };
@@ -15,20 +15,30 @@ function size(node) {
   return node.hub ? HUB_NODE : NODE;
 }
 
-function short(text, max) {
-  if (!text) return '';
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+// Text padding inside a node (viewBox units): keeps glyphs clear of the pill's rounded ends.
+const PAD = { label: 24, sub: 28 };
+const FONT = { label: 13.5, hubLabel: 15, sub: 10 };
+
+function LegendLine({ kind, dashed = false }) {
+  return (
+    <svg width="22" height="8" aria-hidden="true">
+      <line x1="0" y1="4" x2="22" y2="4" className={`legend-line edge--${kind}`} strokeDasharray={dashed ? '3 4' : undefined} />
+    </svg>
+  );
 }
 
 function Legend() {
   return (
     <ul className="graph-legend" aria-label="Legenda do grafo">
-      <li><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" className="legend-line edge--handoff" /></svg>handoff</li>
-      <li><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" className="legend-line edge--revisit" /></svg>retorno controlado</li>
-      <li><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" className="legend-line edge--fanout" /></svg>paralelo</li>
-      <li><span className="legend-badge legend-badge--plan">1</span>passo do plano</li>
-      <li><span className="legend-badge legend-badge--write" />escreveu</li>
-      <li><span className="legend-badge legend-badge--paused" />aguarda humano</li>
+      <li><LegendLine kind="route" />orquestrador escolhe quem começa</li>
+      <li><LegendLine kind="handoff" />um agente passa a vez a outro</li>
+      <li><LegendLine kind="revisit" />volta a um agente para confirmar</li>
+      <li><LegendLine kind="fanout" />agentes em paralelo</li>
+      <li><LegendLine kind="return" dashed />parte entregue ao orquestrador</li>
+      <li><span className="legend-badge legend-badge--plan">1</span>ordem no plano</li>
+      <li><span className="legend-badge legend-badge--write" />gravou dado do cliente</li>
+      <li><span className="legend-badge legend-badge--paused" />aguarda analista</li>
+      <li><span className="legend-chip">2 tools</span>ferramentas usadas (passe o mouse no agente)</li>
     </ul>
   );
 }
@@ -37,7 +47,7 @@ function Legend() {
  * O grafo ao vivo do turno: orquestrador no centro, especialistas do registry em volta.
  * Tudo o que ele desenha sai de `deriveTurn` (graphModel.js) — nada é inventado na tela.
  */
-export default function AgentGraph({ agents = [], turn, live = false, labels = {} }) {
+export default function AgentGraph({ agents = [], turn, live = false, labels = {}, highlight = null }) {
   const reducedMotion = useReducedMotion();
   const graph = useMemo(() => layoutGraph(agents, { ...VIEW, padX: 80, padY: 46 }), [agents]);
   const visitCounts = useMemo(() => (turn?.path || []).reduce((acc, key) => ({ ...acc, [key]: (acc[key] || 0) + 1 }), {}), [turn]);
@@ -46,10 +56,14 @@ export default function AgentGraph({ agents = [], turn, live = false, labels = {
   const caption = describeTurn(turn, { live, labels });
   const pathLabels = (turn?.path || []).map((key) => labels[key] || key);
   const centre = graph.byKey[HUB];
+  const focusNodes = new Set(highlight?.nodes || []);
+  const focusEdges = highlight?.edges || [];
+  const hasFocus = focusNodes.size > 0 || focusEdges.length > 0;
+  const edgeInFocus = (edge) => focusEdges.some((item) => item.from === edge.from && item.to === edge.to);
 
   return (
     <figure className={`agent-graph ${live ? 'is-live' : ''}`} aria-busy={live || undefined}>
-      <svg viewBox={`0 0 ${VIEW.width} ${VIEW.height}`} className="agent-graph-svg" role="img" aria-labelledby="agent-graph-title agent-graph-desc">
+      <svg viewBox={`0 0 ${VIEW.width} ${VIEW.height}`} className={`agent-graph-svg ${hasFocus ? 'has-focus' : ''}`} role="img" aria-labelledby="agent-graph-title agent-graph-desc">
         <title id="agent-graph-title">Grafo de coordenação do turno</title>
         <desc id="agent-graph-desc">{caption || 'Nenhum turno em andamento.'} {pathLabels.length ? `Caminho: ${pathLabels.join(', ')}.` : ''}</desc>
         <defs>
@@ -74,7 +88,7 @@ export default function AgentGraph({ agents = [], turn, live = false, labels = {
           const fresh = live && edge.step === maxStep;
           const key = `${edge.from}-${edge.to}-${edge.step}`;
           return (
-            <g key={key} className={`graph-edge edge--${edge.kind} ${fresh ? 'is-fresh' : ''}`}
+            <g key={key} className={`graph-edge edge--${edge.kind} ${fresh ? 'is-fresh' : ''} ${edgeInFocus(edge) ? 'is-focus' : ''}`}
               style={live ? undefined : { '--edge-delay': `${Math.min(edge.step, 8) * 110}ms` }}>
               <title>{`${KIND_LABELS[edge.kind]}: ${labels[edge.from] || edge.from} → ${labels[edge.to] || edge.to}${edge.task ? ` — ${edge.task}` : ''}`}</title>
               <path d={d} pathLength="1" className="edge-line" markerEnd={`url(#arrow-${edge.kind})`} />
@@ -96,23 +110,29 @@ export default function AgentGraph({ agents = [], turn, live = false, labels = {
           const toolsUsed = turn?.tools?.[node.key] || [];
           const planStep = turn?.planIndex?.[node.key];
           const visits = visitCounts[node.key] || 0;
-          const label = node.label;
-          let sub = '';
-          if (!node.active) sub = 'desligado';
-          else if (paused) sub = 'aguarda analista';
-          else if (node.hub) sub = turn?.consolidated ? 'consolidou a resposta' : turn?.plan?.length ? `plano · ${turn.plan.length} tarefa(s)` : 'roteia e consolida';
-          else if (isActive) sub = 'em ação';
-          else if (toolsUsed.length) sub = short(toolsUsed.join(', '), 22);
-          else if (visited) sub = 'participou';
+          const sub = nodeSubtitle({ active: node.active, paused, hub: node.hub, isActive, visited, tools: toolsUsed,
+            consolidated: turn?.consolidated, planLength: turn?.plan?.length || 0 });
+          const labelFont = node.hub ? FONT.hubLabel : FONT.label;
+          const suffix = visits > 1 ? ` ×${visits}` : '';
+          const label = `${fitText(node.label, w - PAD.label - suffix.length * labelFont * 0.6, labelFont)}${suffix}`;
+          const subText = fitText(sub, w - PAD.sub, FONT.sub);
+          const tooltip = [
+            `${node.label} (${node.key})${node.model ? ` · ${node.model}` : ''}`,
+            node.active ? '' : 'desligado no registry',
+            toolsUsed.length ? `tools neste turno: ${toolsUsed.join(', ')}` : '',
+            writes.length ? `gravou em: ${writes.join(', ')}` : '',
+            planStep ? `passo ${planStep} do plano` : '',
+          ].filter(Boolean).join('\n');
           const classes = ['graph-node', node.hub ? 'is-hub' : '', node.active ? '' : 'is-inactive', visited ? 'is-visited' : '',
-            isActive ? 'is-active' : '', paused ? 'is-paused' : '', writes.length ? 'has-write' : ''].filter(Boolean).join(' ');
+            isActive ? 'is-active' : '', paused ? 'is-paused' : '', writes.length ? 'has-write' : '',
+            focusNodes.has(node.key) ? 'is-focus' : ''].filter(Boolean).join(' ');
           return (
             <g key={node.key} className={classes} transform={`translate(${node.x} ${node.y})`}>
-              <title>{`${label} (${node.key})${node.model ? ` · ${node.model}` : ''}${node.active ? '' : ' · desligado no registry'}${writes.length ? ` · escreveu em ${writes.join(', ')}` : ''}`}</title>
+              <title>{tooltip}</title>
               {isActive && <rect className="node-pulse" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={(h + 10) / 2} />}
               <rect className="node-body" x={-w / 2} y={-h / 2} width={w} height={h} rx={node.hub ? 14 : h / 2} />
-              <text className="node-label" y={sub ? -2 : 4} textAnchor="middle">{short(label, node.hub ? 18 : 15)}{visits > 1 ? ` ×${visits}` : ''}</text>
-              {sub && <text className="node-sub" y={13} textAnchor="middle">{sub}</text>}
+              <text className="node-label" y={subText ? -2 : 4} textAnchor="middle">{label}</text>
+              {subText && <text className="node-sub" y={13} textAnchor="middle">{subText}</text>}
               {planStep && (
                 <g className="node-badge node-badge--plan" transform={`translate(${-w / 2 + 6} ${-h / 2 + 1})`}>
                   <circle r="9" />

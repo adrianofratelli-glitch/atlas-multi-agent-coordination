@@ -236,3 +236,33 @@ export function duplicateHandoffs(handoffs = []) {
 export function isHumanResume(event) {
   return Boolean(event && event.from_agent === HUMAN && event.to_agent);
 }
+
+/**
+ * Fit a label inside a node: estimated width = chars × fontSize × charEm (Source Code Pro advances
+ * 0.6em per glyph; Special Gothic averages below 0.6em, so 0.6 is a safe upper bound for both).
+ * Returns the text, cut with an ellipsis when it would cross `maxWidth` (viewBox units). The SVG
+ * scales text and nodes together, so a fit in viewBox units holds at every viewport width.
+ */
+export function fitText(text, maxWidth, fontSize, charEm = 0.6) {
+  const value = String(text || '');
+  const capacity = Math.max(1, Math.floor(maxWidth / (fontSize * charEm)));
+  if (value.length <= capacity) return value;
+  return `${value.slice(0, Math.max(1, capacity - 1))}…`;
+}
+
+/** Estimated rendered width of `text` (same model as fitText). */
+export function textWidth(text, fontSize, charEm = 0.6) {
+  return String(text || '').length * fontSize * charEm;
+}
+
+/** Second line of a specialist node: a compact status, never the raw tool list (that goes in the tooltip). */
+export function nodeSubtitle({ active = true, paused = false, hub = false, isActive = false, visited = false,
+  tools = [], consolidated = false, planLength = 0 } = {}) {
+  if (!active) return 'desligado';
+  if (paused) return 'aguarda analista';
+  if (hub) return consolidated ? 'consolidou' : planLength ? `plano: ${planLength} tarefa${planLength === 1 ? '' : 's'}` : 'roteia e consolida';
+  if (isActive) return 'em ação';
+  if (tools.length) return `${tools.length} tool${tools.length === 1 ? '' : 's'}`;
+  if (visited) return 'participou';
+  return '';
+}

@@ -4,7 +4,8 @@ import { isHumanResume, duplicateHandoffs } from './graphModel.js';
 import ChatStage from './components/ChatStage.jsx';
 import CompliancePage from './components/CompliancePage.jsx';
 import AgentsPage from './components/AgentsPage.jsx';
-import ComparePage, { FLAGSHIP_MESSAGE } from './components/ComparePage.jsx';
+import ComparePage from './components/ComparePage.jsx';
+import { answerAuthor } from './turnNarrative.js';
 import MetricsPage from './components/MetricsPage.jsx';
 import CrashResumeDialog from './components/CrashResume.jsx';
 
@@ -19,8 +20,10 @@ const crashMessage = (customerKey) => {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function assistantMessage(run, extra = {}) {
+  const author = answerAuthor(run);
   return {
     role: 'assistant', agent: run.active_agent, text: run.response, cacheHit: run.cache_hit,
+    consolidatedFrom: author.consolidated ? author.count : 0,
     tokens: run.usage?.total ?? 0, awaiting: run.awaiting_approval || null, ...extra,
   };
 }
@@ -95,7 +98,11 @@ export default function App() {
       loadTypedMemory();
       if (resume && lastConv?.turns?.length) {
         setConversationId(lastConv.conversation_id);
-        setMessages(lastConv.turns.map((turn) => ({ role: turn.role, agent: lastConv.active_agent, text: turn.content })));
+        // The last answer gets the same signature as a live turn (consolidated → orchestrator).
+        const author = answerAuthor({ active_agent: lastConv.active_agent, timeline: lastConv.last_timeline || [] });
+        const lastIndex = lastConv.turns.length - 1;
+        setMessages(lastConv.turns.map((turn, index) => ({ role: turn.role, agent: lastConv.active_agent, text: turn.content,
+          consolidatedFrom: index === lastIndex && turn.role === 'assistant' && author.consolidated ? author.count : 0 })));
         // sem isso a conversa retomada mostra o texto certo mas grafo/quadro vazios — parece que o
         // multi-agent não rodou, quando só faltava recarregar o registro do último turno.
         setTimeline(lastConv.last_timeline || []);
@@ -270,12 +277,6 @@ export default function App() {
 
   const labels = useMemo(() => Object.fromEntries([...(topology?.agents || []), ...agents].map((agent) => [agent.agent_key, agent.label])), [agents, topology]);
   const graphAgents = topology?.agents?.length ? topology.agents : agents;
-  const compareDefault = useMemo(() => {
-    const multi = demoScenarios
-      .filter((item) => !item.demo_kind && (item.expected_agents || []).length >= 3)
-      .sort((a, b) => (b.expected_agents.length - a.expected_agents.length));
-    return multi[0]?.message || FLAGSHIP_MESSAGE;
-  }, [demoScenarios]);
 
   const stageHeader = (
     <header className="stage-header">
@@ -309,7 +310,7 @@ export default function App() {
               onSuggestion: (message) => send(message), onOpenQueue: () => { setAdminMode(true); setNav('Decisões'); } }}
           />
         )}
-        {nav === 'A/B' && <ComparePage key={`${customer?.customer_key}-${compareDefault}`} labels={labels} customerKey={customer?.customer_key} defaultMessage={compareDefault} />}
+        {nav === 'A/B' && <ComparePage key={customer?.customer_key || 'none'} labels={labels} customerKey={customer?.customer_key} demoScenarios={demoScenarios} />}
         {nav === 'Agentes' && <AgentsPage agents={agents} adminMode={adminMode} setAdminMode={setAdminMode} reload={loadCore} />}
         {nav === 'Métricas' && <MetricsPage metrics={metrics} evalRuns={evalRuns} adminMode={adminMode} labels={labels} refreshKey={refreshKey} />}
         {nav === 'Decisões' && <CompliancePage adminMode={adminMode} setAdminMode={setAdminMode} customerKey={customer?.customer_key} onResumed={applyResumedTurn} labels={labels} refreshKey={refreshKey} />}

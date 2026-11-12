@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import RichText from './RichText.jsx';
 import { LockIcon } from './Icons.jsx';
+import { authorLabel } from '../turnNarrative.js';
 
 function argsSummary(args) {
   if (!args || typeof args !== 'object') return '';
@@ -29,6 +30,9 @@ export function ApprovalCard({ approval, labels = {}, onOpenQueue }) {
 }
 
 const agentName = (key, labels = {}) => (key || '').split('+').filter(Boolean).map((part) => labels[part] || part).join(' + ');
+const signature = (message, labels) => (message.consolidatedFrom
+  ? authorLabel(message.consolidatedFrom)
+  : agentName(message.agent, labels) || 'assistente');
 
 export default function ChatPanel({ messages, input, setInput, send, busy, customerName, demos, suggestions, onSuggestion, labels, onOpenQueue }) {
   const listRef = useRef(null);
@@ -45,7 +49,7 @@ export default function ChatPanel({ messages, input, setInput, send, busy, custo
         )}
         {messages.map((message, index) => (
           <div className={`message ${message.role} ${message.resumed ? 'is-resumed' : ''}`} key={index}>
-            <small>{message.role === 'user' ? 'você' : `${agentName(message.agent, labels) || 'assistente'}${message.resumed ? ' · após decisão humana' : ''}`}</small>
+            <small title={message.consolidatedFrom ? `Último especialista: ${agentName(message.agent, labels)}` : undefined}>{message.role === 'user' ? 'você' : `${signature(message, labels)}${message.resumed ? ' · após decisão humana' : ''}`}</small>
             {message.role === 'assistant' && message.cacheHit !== undefined && (
               <span className={`cache-badge ${message.cacheHit ? 'hit' : 'miss'}`}>
                 {message.cacheHit ? 'cache hit · 0 tokens' : `cache miss · ${message.tokens ?? 0} tokens`}

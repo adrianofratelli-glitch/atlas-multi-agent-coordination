@@ -24,7 +24,7 @@ export default function UnderTheHood({ events = [], live = false, streamFeed = [
       </header>
       <ol className="hood-list" ref={listRef}>
         {rows.map((row) => (
-          <li key={row.index} className={`hood-row ${row.write ? 'is-write' : ''} ${row.external ? 'is-external' : ''} ${row.replayed ? 'is-replayed' : ''}`}>
+          <li key={row.index} id={`hood-op-${row.index}`} tabIndex={-1} className={`hood-row ${row.write ? 'is-write' : ''} ${row.external ? 'is-external' : ''} ${row.replayed ? 'is-replayed' : ''}`}>
             <div className="hood-line">
               <code className="hood-collection">{row.collection}</code>
               <span className={`hood-op op-${row.op}`}>{row.opLabel}</span>

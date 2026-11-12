@@ -111,3 +111,21 @@ test('crash/resume helpers', () => {
   assert.equal(isHumanResume({ from_agent: 'human_reviewer', to_agent: 'order_agent' }), true);
   assert.equal(isHumanResume({ from_agent: 'order_agent', to_agent: 'billing_agent' }), false);
 });
+
+test('node text always fits inside the node (viewBox units)', async () => {
+  const { fitText, textWidth, nodeSubtitle } = await import('../src/graphModel.js');
+  const nodeWidth = 128;
+  const subMax = nodeWidth - 28;
+  for (const sub of [
+    nodeSubtitle({ tools: ['get_order', 'transfer_to_agent', 'request_order_status_change'] }),
+    nodeSubtitle({ paused: true }), nodeSubtitle({ visited: true }), nodeSubtitle({ active: false }),
+    fitText('get_order, transfer_to_agent, request_order_status_change', subMax, 10),
+  ]) {
+    assert.ok(textWidth(fitText(sub, subMax, 10), 10) <= subMax, sub);
+  }
+  assert.equal(nodeSubtitle({ tools: ['a', 'b'] }), '2 tools');
+  assert.equal(nodeSubtitle({ hub: true, planLength: 4 }), 'plano: 4 tarefas');
+  assert.equal(fitText('Orquestrador', 154 - 24, 15), 'Orquestrador');
+  assert.ok(fitText('Um rótulo de agente muito comprido', 104, 13.5).endsWith('…'));
+  assert.ok(textWidth(fitText('Um rótulo de agente muito comprido', 104, 13.5), 13.5) <= 104);
+});
