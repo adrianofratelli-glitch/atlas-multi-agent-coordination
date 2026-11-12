@@ -157,3 +157,14 @@ test('events emitted before their step (blackboard opened before the plan) wait 
   assert.deepEqual(steps[0].events, [0, 1]);
   assert.equal(stepByEvent(steps).get(0).kind, 'plan');
 });
+
+test('escrita pausada para o analista nunca aparece como registrada', () => {
+  const events = [
+    { category: 'agent', agent: 'order_agent', title: 'order_agent · tool calling (2 rodada(s): get_order, request_order_status_change)',
+      result: { mode: 'tool_calling', tools_called: ['get_order', 'request_order_status_change'], writes: [], pending_approval: true } },
+  ];
+  const steps = narrateTurn(events);
+  const step = steps.find((item) => item.kind === 'agent');
+  assert.ok(!/registrou a mudança/.test(step.text), step.text);
+  assert.match(step.text, /aguarda o analista/);
+});

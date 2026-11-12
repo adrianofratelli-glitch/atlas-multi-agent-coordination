@@ -34,6 +34,13 @@ const COLLECTION_VERBS = {
   customer_memory: ['usou o orçamento guardado na memória como filtro'],
 };
 
+const WRITE_NOUNS = {
+  request_order_status_change: 'a mudança de status do pedido',
+  redeem_reward: 'o resgate de pontos',
+  request_delivery_reschedule: 'o reagendamento da entrega',
+  open_support_ticket: 'o chamado de atendimento',
+};
+
 export const WHY = {
   guardrail: 'Fraude, jailbreak e pedido de dados de outro cliente param aqui, antes de gastar token com especialista.',
   blocked: 'Nenhum agente rodou: zero token de especialista, e o bloqueio fica auditado no Atlas.',
@@ -334,7 +341,15 @@ export function narrateTurn(events = [], { labels = {}, live = false } = {}) {
     if (Array.isArray(result.tools_called)) {
       for (const tool of result.tools_called) {
         if (tool === 'transfer_to_agent') continue;
-        addVerb(step, TOOL_VERBS[tool] || `usou ${tool}`, WRITE_TOOLS.has(tool) && (result.writes || []).includes(tool));
+        const wrote = (result.writes || []).includes(tool);
+        if (WRITE_TOOLS.has(tool) && !wrote) {
+          // Pediu a escrita, mas ela NÃO aconteceu: pausada para o analista ou recusada pelos portões do servidor.
+          addVerb(step, result.pending_approval
+            ? `pediu ${WRITE_NOUNS[tool] || tool}, que aguarda o analista (nada gravado ainda)`
+            : `tentou ${WRITE_NOUNS[tool] || tool}, mas o servidor não executou (nada gravado)`, false);
+          continue;
+        }
+        addVerb(step, TOOL_VERBS[tool] || `usou ${tool}`, WRITE_TOOLS.has(tool) && wrote);
       }
       if (result.task && !step.task) step.task = result.task;
       step.tools = [...new Set([...(step.tools || []), ...result.tools_called.filter((tool) => tool !== 'transfer_to_agent')])];
