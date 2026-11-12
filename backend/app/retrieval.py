@@ -24,7 +24,7 @@ KB_LEGS = ("vector", "lexical")
 DEFAULT_KB_BRANCH = 20
 KB_LIMIT = 4
 MAX_QUERY_CHARS = 2000
-STRATEGIES = ("rankFusion", "rankFusion+rerank", "rerank_indisponivel", "rankFusion_basico",
+STRATEGIES = ("rankFusion", "scoreFusion", "rankFusion+rerank", "rerank_indisponivel", "rankFusion_basico",
               "rrf_aplicacao", "vetor", "rrf_local")
 
 _capabilities = ac.CapabilityCache(ttl_seconds=300)
@@ -121,9 +121,23 @@ def build_kb_lexical_pipeline(query: str, *, limit: int = 10, category: str | No
     ]
 
 
+def build_score_fusion(pipelines: dict, *, weights: dict | None = None, normalization: str = "minMaxScaler",
+                       score_details: bool = False) -> dict:
+    """`$scoreFusion` (MongoDB 8.3+): soma ponderada dos SCORES normalizados de cada perna.
+
+    Diferente do `$rankFusion` (RRF, só a posição conta), aqui a distância do 1º para o 2º lugar de
+    cada perna pesa: um BM25 muito alto puxa o artigo. Por isso a normalização é obrigatória
+    (`minMaxScaler`: o BM25 não tem teto, o cosseno vai de 0 a 1)."""
+    stage: dict[str, Any] = {"input": {"pipelines": pipelines, "normalization": normalization},
+                             "scoreDetails": bool(score_details)}
+    if weights:
+        stage["combination"] = {"weights": {name: weights[name] for name in pipelines if name in weights}}
+    return {"$scoreFusion": stage}
+
+
 def build_kb_rank_fusion_pipeline(query: str, *, limit: int = KB_LIMIT, config: dict | None = None,
                                   rerank: dict | None = None, category: str | None = None,
-                                  basic: bool = False) -> list[dict]:
+                                  basic: bool = False, method: str = "rank") -> list[dict]:
     """Híbrido server-side: $rankFusion funde as duas pernas dentro do banco (MongoDB 8.0+).
 
     Uma agregação em vez de dois round-trips + fusão em Python. `scoreDetails` explica cada
@@ -139,9 +153,12 @@ def build_kb_rank_fusion_pipeline(query: str, *, limit: int = KB_LIMIT, config: 
                                         fuzzy_max_edits=0 if basic else cfg["fuzzy_max_edits"],
                                         synonyms=False if basic else cfg["synonyms"])[:2]
     pool = rerank["pool"] if rerank else limit
+    fusion = (build_score_fusion({"vector": vector, "lexical": lexical}, weights=cfg["weights"],
+                                 score_details=cfg["score_details"]) if method == "score" else
+              ac.build_rank_fusion({"vector": vector, "lexical": lexical}, weights=cfg["weights"],
+                                   score_details=cfg["score_details"]))
     stages = [
-        ac.build_rank_fusion({"vector": vector, "lexical": lexical}, weights=cfg["weights"],
-                             score_details=cfg["score_details"]),
+        fusion,
         {"$limit": pool},
         ac.fusion_meta_stage(score_details=cfg["score_details"]),
     ]
@@ -203,9 +220,15 @@ async def search_kb_explained(store, message: str, *, agent_doc: dict | None = N
                            "preview": rr["model"].startswith("rerank-3")},
                    warnings=(warns + [f"rerank: {w}" for w in rwarns])[:5])
 
+    # Método de fusão é dado (`retrieval.fusion.method`: "rank" | "score"), decidido por medição (ADR-006).
+    fusion_block = _retrieval_block(agent_doc, "fusion")
+    method = "score" if strategy == "scoreFusion" or (strategy is None and isinstance(fusion_block, dict)
+                                                      and fusion_block.get("method") == "score") else "rank"
+    out.config["method"] = method
+
     async def fused(*, rerank: dict | None, basic: bool) -> list[dict]:
         return await store.aggregate("kb_articles", build_kb_rank_fusion_pipeline(
-            message, limit=KB_LIMIT, config=cfg, rerank=rerank, category=category, basic=basic))
+            message, limit=KB_LIMIT, config=cfg, rerank=rerank, category=category, basic=basic, method=method))
 
     if not store.memory and strategy != "rrf_aplicacao":
         if want_rerank and _capabilities.usable("rerank"):
@@ -233,6 +256,7 @@ async def search_kb_explained(store, message: str, *, agent_doc: dict | None = N
                 if articles:
                     out.articles = articles
                     out.strategy = ("rerank_indisponivel" if want_rerank
+                                    else "scoreFusion" if method == "score" and rich
                                     else "rankFusion" if rich else "rankFusion_basico")
                 if not rich:
                     out.fallbacks.append("sinônimos/fuzzy: indisponíveis (cache de capability)")

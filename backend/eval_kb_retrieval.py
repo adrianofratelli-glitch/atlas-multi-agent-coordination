@@ -68,7 +68,7 @@ async def main(argv=None) -> int:
             retrieval["rerank"] = json.loads(args.rerank)
         agent_doc = {"retrieval": retrieval}
         data = json.loads(DATASET.read_text(encoding="utf-8"))
-        known = {"rankFusion", "rankFusion+rerank", "rerank_indisponivel", "rankFusion_basico",
+        known = {"rankFusion", "scoreFusion", "rankFusion+rerank", "rerank_indisponivel", "rankFusion_basico",
                  "rrf_aplicacao", "vetor", "rrf_local", "sem_suporte"}
         await _search(store, "aquecimento", None, args.strategy, agent_doc)
         rows, lat, violations = [], [], []

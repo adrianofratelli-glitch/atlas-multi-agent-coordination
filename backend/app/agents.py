@@ -890,6 +890,7 @@ async def search_kb(store: DataStore, message: str, agent_doc: dict | None = Non
 
 _KB_TITLES = {
     "rankFusion": "RAG híbrido: $rankFusion server-side",
+    "scoreFusion": "RAG híbrido: $scoreFusion server-side (scores normalizados)",
     "rankFusion+rerank": "RAG híbrido: $rankFusion + $rerank server-side",
     "rerank_indisponivel": "RAG híbrido: $rankFusion server-side ($rerank indisponível)",
     "rankFusion_basico": "RAG híbrido: $rankFusion sem sinônimos/fuzzy",
