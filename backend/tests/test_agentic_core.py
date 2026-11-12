@@ -632,3 +632,19 @@ async def test_continue_retoma_escrita_aprovada_que_falhou(monkeypatch):
     assert done is not None and (await _order(store, "PED-1001"))["status"] == "reembolsado"
     assert await _decisions(store, "PED-1001") == 1
     assert await orchestration_graph.continue_thread(service, thread) is None
+
+
+async def test_conversa_reaberta_traz_a_pausa_pendente_e_some_depois_da_decisao():
+    """Reabrir a conversa (troca de identidade) mostra de novo o cartão 'Aguardando analista'."""
+    from app.main import latest_conversation
+    store, _, service = await _world(_refund_script())
+    paused = await orchestration_graph.run_turn(service, "quero reembolso do pedido PED-1001", ANA, _conv())
+    conversation = await latest_conversation(customer=ANA, store=store)
+    assert conversation["awaiting_approval"]["review_id"] == paused.awaiting_approval["review_id"]
+    assert conversation["awaiting_approval"]["args"]["status"] == "reembolsado"
+    review = await store.find_one("pending_reviews", {"review_id": paused.awaiting_approval["review_id"]})
+    await orchestration_graph.resume_turn(service, review["evidence"]["thread_id"], {"approved": True},
+                                          review_id=review["review_id"])
+    from app.reviews import resolve_review
+    await resolve_review(store, review["review_id"], human_decision="approve", resolved_by="x")
+    assert "awaiting_approval" not in await latest_conversation(customer=ANA, store=store)

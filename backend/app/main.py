@@ -299,6 +299,17 @@ async def latest_conversation(customer: dict = Depends(current_customer), store:
         conversation["last_usage"] = trace.get("usage", {})
         conversation["last_llm_calls"] = trace.get("llm_calls", [])
         conversation["last_economics"] = trace.get("economics", {})
+    # Pausa HITL ainda pendente nesta conversa: a tela reaberta mostra o cartão "Aguardando analista".
+    pending = await store.find_many("pending_reviews", {
+        "customer_key": customer["customer_key"], "conversation_id": conversation["conversation_id"],
+        "status": "pending"}, limit=10, sort=[("created_at", -1)])
+    # `evidence.kind` filtrado aqui: o store em memória do DEMO_MODE não casa caminho com ponto.
+    paused = [r for r in pending if (r.get("evidence") or {}).get("kind") == "hitl_interrupt"]
+    if paused:
+        evidence = paused[0].get("evidence") or {}
+        conversation["awaiting_approval"] = {"review_id": paused[0]["review_id"], "tool": evidence.get("tool"),
+                                             "args": evidence.get("args") or {}, "agent": paused[0].get("agent"),
+                                             "reason": paused[0].get("reasoning")}
     return conversation
 
 

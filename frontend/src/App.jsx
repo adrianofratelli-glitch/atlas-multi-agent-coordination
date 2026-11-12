@@ -102,11 +102,13 @@ export default function App() {
         const author = answerAuthor({ active_agent: lastConv.active_agent, timeline: lastConv.last_timeline || [] });
         const lastIndex = lastConv.turns.length - 1;
         setMessages(lastConv.turns.map((turn, index) => ({ role: turn.role, agent: lastConv.active_agent, text: turn.content,
-          consolidatedFrom: index === lastIndex && turn.role === 'assistant' && author.consolidated ? author.count : 0 })));
+          consolidatedFrom: index === lastIndex && turn.role === 'assistant' && author.consolidated ? author.count : 0,
+          // pausa HITL ainda pendente: o cartão "Aguardando analista" volta junto com a conversa
+          awaiting: index === lastIndex && turn.role === 'assistant' ? lastConv.awaiting_approval || null : null })));
         // sem isso a conversa retomada mostra o texto certo mas grafo/quadro vazios — parece que o
         // multi-agent não rodou, quando só faltava recarregar o registro do último turno.
         setTimeline(lastConv.last_timeline || []);
-        setLastRun(lastConv.last_timeline ? { active_agent: lastConv.active_agent, usage: lastConv.last_usage || {}, llm_calls: lastConv.last_llm_calls || [], economics: lastConv.last_economics || {} } : null);
+        setLastRun(lastConv.last_timeline ? { active_agent: lastConv.active_agent, usage: lastConv.last_usage || {}, llm_calls: lastConv.last_llm_calls || [], economics: lastConv.last_economics || {}, awaiting_approval: lastConv.awaiting_approval || null } : null);
         loadBoard(lastConv.conversation_id);
       }
     } catch (err) { setCustomer(null); setError(err.message); }

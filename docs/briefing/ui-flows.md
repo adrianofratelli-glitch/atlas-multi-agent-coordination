@@ -48,7 +48,7 @@ A ordem importa (o que um chip escreve o seguinte usa), por isso eles ficam **fo
 
 Um clique em **"Nova conversa"** zera `conversation_id`, mensagens, timeline e métricas locais. **"Reiniciar memória da demo"** (`POST /api/demo/reset`) vai além: desfaz o que a demo gravou NESTE cliente (fatos extraídos, episódios, curto prazo, cache do cliente) e reativa o que ela substituiu — o roteiro inteiro pode ser repetido sem a segunda rodada parecer que "não aconteceu nada" por deduplicação. Não toca no cache global aquecido nem em nenhum outro cliente. Fica liberado no banco da demo de propósito (é o botão usado ao vivo, de escopo estreito) e tem limite de requisições; o reset completo do ambiente é `backend/scripts/reset_demo.py`.
 
-**Retomada de sessão**: ao trocar de identidade (ou no boot), `GET /api/conversations/latest` traz a última conversa daquele cliente (se houver, dentro da janela de 24h) e repopula mensagens + timeline do último turno — para não parecer que nada aconteceu numa sessão retomada.
+**Retomada de sessão**: ao trocar de identidade, `GET /api/conversations/latest` traz a última conversa daquele cliente (se houver, dentro da janela de 24h) e repopula mensagens + timeline do último turno; se a conversa tem uma pausa HITL ainda pendente (`awaiting_approval`, lida de `pending_reviews`), o cartão "Aguardando analista" volta na última resposta — para não parecer que nada aconteceu numa sessão retomada.
 
 ## Aba A/B (`components/ComparePage.jsx`)
 
