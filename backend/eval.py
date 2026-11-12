@@ -58,14 +58,27 @@ def grade_case(case: dict, body: dict) -> dict:
         for index, agent in enumerate(raw_agent_sequence)
         if index == 0 or agent != raw_agent_sequence[index - 1]
     ]
+    # Com tool calling (ADR-011) a ordem depois do 1º agente vem do plano do orquestrador e o retorno
+    # controlado virou consolidação: trajetória vale por SUBCONJUNTO (todos os esperados atuaram e o 1º
+    # é o da regra), handoffs por mínimo. No caminho determinístico (sem modelo) vale a sequência exata.
+    tool_mode = any("tool calling" in (event.get("title") or "") for event in body.get("timeline", []))
     if "expected_agents" in case:
-        checks.append(("agent_sequence", agent_sequence == case["expected_agents"]))
+        expected = case["expected_agents"]
+        if tool_mode:
+            ok = set(expected) <= set(agent_sequence) and bool(agent_sequence) and agent_sequence[0] == expected[0]
+        else:
+            ok = agent_sequence == expected
+        checks.append(("agent_sequence", ok))
     if "expect_handoffs" in case:
-        handoffs = sum(1 for event in body.get("timeline", []) if event.get("category") == "handoff")
-        checks.append(("handoffs", handoffs == case["expect_handoffs"]))
-    if "expect_revisit" in case:
+        handoffs = sum(1 for event in body.get("timeline", []) if event.get("category") == "handoff"
+                       and (event.get("result") or {}).get("to_agent"))
+        expected_handoffs = len(set(case.get("expected_agents", []))) - 1 if tool_mode else case["expect_handoffs"]
+        checks.append(("handoffs", handoffs >= expected_handoffs if tool_mode else handoffs == expected_handoffs))
+    if "expect_revisit" in case and not tool_mode:
         has_revisit = len(agent_sequence) != len(set(agent_sequence))
         checks.append(("revisit", has_revisit == case["expect_revisit"]))
+    if "expect_awaiting_approval" in case:
+        checks.append(("awaiting_approval", bool(body.get("awaiting_approval")) == case["expect_awaiting_approval"]))
 
     passed = all(ok for _, ok in checks)
     return {
@@ -106,7 +119,7 @@ def grade_outcome(case, before, after):
         checks["no_unexpected_business_write"] = before == after
     elif collection == "orders":
         order_id = re.search(r"PED-\d+", case["message"]).group()
-        expected_status = "reembolsado" if case["case_id"] == "diego-refund-return" else "troca_solicitada"
+        expected_status = "troca_solicitada"
         checks["persisted_order_status"] = any(
             doc.get("order_id") == order_id and doc.get("status") == expected_status
             for doc in after["orders"])
@@ -130,6 +143,11 @@ def grade_outcome(case, before, after):
     elif collection == "pending_reviews":
         order_id = re.search(r"PED-\d+", case["message"]).group()
         checks["persisted_pending_review"] = any(doc.get("status") == "pending" and doc.get("subject_id") == order_id for doc in after[collection])
+        if case.get("expect_awaiting_approval"):
+            # Pausa HITL: a escrita NÃO pode ter acontecido antes da decisão humana.
+            status_before = {d.get("order_id"): d.get("status") for d in before["orders"]}
+            checks["no_write_before_approval"] = all(
+                status_before.get(d.get("order_id")) == d.get("status") for d in after["orders"])
     else:
         checks["outcome_supported"] = False
     return checks

@@ -273,6 +273,10 @@ async def n_fanout_check(state: TurnState, config) -> dict:
     svc = _svc(config)
     rules = await svc.store.find_many("routing_rules", {}, brain=True, limit=100)
     fanout_targets = detect_fanout(state["masked"], rules)
+    from .agents import _requested_status
+    if fanout_targets and _requested_status(state["masked"]) == "reembolsado":
+        # Reembolso passa pela cadeia, onde existe a pausa para aprovação humana (o fan-out não pausa).
+        fanout_targets = None
     if fanout_targets and all(target in state["registry"] for target in fanout_targets):
         return {"fanout_targets": fanout_targets}
     return {"fanout_targets": None}

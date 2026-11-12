@@ -384,12 +384,12 @@ DEMO_SCENARIOS = [
     },
     {
         "scenario_id": "diego-refund-return", "customer_key": "diego", "position": 4,
-        "label": "Reembolso → logística → confirmação",
+        "label": "Reembolso pausa para aprovação humana (interrupt no checkpoint)",
         "message": "solicite o reembolso do pedido PED-4001, consulte a entrega e volte para confirmar que o reembolso ficou registrado.",
-        "capabilities": ["3 atuações", "escrita", "retorno controlado"],
-        "expected_agents": ["order_agent", "logistics_agent", "order_agent"],
-        "expect_route_source": "rules", "expect_handoffs": 2, "expect_write_collection": "orders",
-        "expect_revisit": True, "warmup": False,
+        "capabilities": ["aprovação humana", "interrupt + checkpoint no Atlas", "escrita só após decisão"],
+        "expected_agents": ["order_agent"],
+        "expect_route_source": "rules", "expect_write_collection": "pending_reviews",
+        "expect_awaiting_approval": True, "warmup": False,
     },
     {
         "scenario_id": "diego-security-guardrail", "customer_key": "diego", "position": 5,

@@ -219,6 +219,23 @@ async def run_order_agent(store: DataStore, message: str, customer: dict, llm=No
         event = TimelineEvent(category="agent", title="Consulta segura de pedido (sem resultado — orientação com os pedidos reais)", agent="order_agent", collection="orders", op="read", filter=query, result=[], duration_ms=(perf_counter() - started) * 1000)
         return AgentResult(response, event)
     if requested_status:
+        # Mesma política de aprovação humana do tool calling (ADR-012): sem modelo, o runner também pausa.
+        from .hitl import load_policies, matching_policy
+        policy = matching_policy(await load_policies(store), "request_order_status_change",
+                                 {"status": requested_status, "order_id": clean["order_id"]})
+        if policy:
+            label = "reembolso" if requested_status == "reembolsado" else "troca"
+            event = TimelineEvent(category="agent", title="Pedido de escrita sujeito a aprovação humana (política hitl_policies)",
+                                  agent="order_agent", collection="orders", op="read", filter=query, result=clean,
+                                  duration_ms=(perf_counter() - started) * 1000)
+            result = AgentResult(f"Seu pedido de {label} do {clean['order_id']} foi registrado e está aguardando a "
+                                 f"aprovação de um analista ({policy.get('reason', '')}). Assim que for decidido, a "
+                                 "resposta aparece aqui na conversa.", event)
+            result.pending_action = {"tool": "request_order_status_change", "agent": "order_agent",
+                                     "args": {"order_id": clean["order_id"], "status": requested_status},
+                                     "facts": {"status": requested_status}, "policy_id": policy.get("policy_id"),
+                                     "reason": policy.get("reason", "")}
+            return result
         response, event, extra, blocked, _ = await change_order_status(
             store, customer, clean, requested_status, (context or {}).get("conversation_id", ""), started)
         if blocked:
