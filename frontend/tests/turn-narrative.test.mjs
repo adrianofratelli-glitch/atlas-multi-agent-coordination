@@ -127,3 +127,33 @@ test('answer author: consolidated turns are signed by the orchestrator', () => {
   assert.equal(answerAuthor({ active_agent: 'order_agent+billing_agent', timeline: [] }).count, 2);
   assert.equal(answerAuthor({ active_agent: 'support_agent', cache_hit: true, agent_path: ['a', 'b'] }).consolidated, false);
 });
+
+test('every step lists the timeline events it consumed; stepByEvent maps capô rows back to steps', async () => {
+  const { stepByEvent } = await import('../src/turnNarrative.js');
+  const steps = narrateTurn(flagship, { labels });
+  const owner = stepByEvent(steps);
+  assert.equal(owner.get(0).kind, 'guardrail');
+  assert.equal(owner.get(1).kind, 'route');
+  assert.equal(owner.get(2).kind, 'route', 'cache MISS belongs to the routing step');
+  assert.equal(owner.get(3).kind, 'plan');
+  assert.equal(owner.get(4).agent, 'support_agent');
+  assert.equal(owner.get(6).agent, 'support_agent', 'blackboard entry of support_agent belongs to its step');
+  assert.equal(owner.get(7).agent, 'support_agent', 'the handoff belongs to the agent that passed the turn');
+  assert.equal(owner.get(13).agent, 'order_agent', 'a handoff without collection is still linked');
+  assert.equal(owner.get(15).kind, 'consolidate');
+  assert.equal(owner.get(16).kind, 'memory_out');
+  assert.equal(owner.get(17).kind, 'guardrail_out', 'event without collection (only in the old Execução tab) is linked');
+  // no event is claimed by two steps
+  const all = steps.flatMap((s) => s.events);
+  assert.equal(all.length, new Set(all).size);
+});
+
+test('events emitted before their step (blackboard opened before the plan) wait for it', async () => {
+  const { stepByEvent } = await import('../src/turnNarrative.js');
+  const steps = narrateTurn([
+    { category: 'coordination', agent: 'orchestrator', title: 'Quadro do turno aberto', collection: 'turn_blackboard', op: 'write' },
+    { category: 'coordination', agent: 'orchestrator', title: 'Plano do turno', collection: 'turn_blackboard', op: 'write', result: { plan: [{ agent: 'order_agent', task: 'x' }] } },
+  ], { labels });
+  assert.deepEqual(steps[0].events, [0, 1]);
+  assert.equal(stepByEvent(steps).get(0).kind, 'plan');
+});

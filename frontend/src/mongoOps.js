@@ -66,3 +66,48 @@ export function summarizeOps(rows = []) {
     collections: new Set(rows.filter((row) => !row.external).map((row) => row.collection)).size,
   };
 }
+
+// Plain-language name of the timeline category, for rows that are not a MongoDB operation.
+export const CATEGORY_LABELS = {
+  agent: 'agente', memory: 'memória', guardrail: 'guardrail', cache: 'cache', handoff: 'coordenação',
+  coordination: 'coordenação', fanout: 'paralelo', web: 'fonte externa',
+};
+
+/**
+ * Every event of the turn, in timeline order, for the capô: MongoDB operations (kind `op`), the
+ * external web search (kind `external`, never labelled as MongoDB) and the remaining events with no
+ * collection (kind `event`: guardrail of output, coordination, handoff without write...), so nothing
+ * the old "Execução" tab showed is lost. Each row keeps `event` for the expandable detail.
+ */
+export function hoodRows(events = []) {
+  const ops = new Map(mongoOps(events).map((row) => [row.index, row]));
+  const rows = [];
+  (events || []).forEach((event, index) => {
+    if (!event) return;
+    const op = ops.get(index);
+    if (op) {
+      rows.push({ ...op, kind: op.external ? 'external' : 'op', category: event.category || null, event });
+      return;
+    }
+    rows.push({
+      index,
+      kind: 'event',
+      agent: event.agent || null,
+      category: event.category || null,
+      categoryLabel: CATEGORY_LABELS[event.category] || event.category || 'evento',
+      title: event.title || 'evento do turno',
+      replayed: Boolean(event.replayed),
+      external: false,
+      write: false,
+      tags: [],
+      event,
+    });
+  });
+  return rows;
+}
+
+/** Indices of the capô rows that belong to a narrative step (in row order). */
+export function rowsForStep(step, rows = []) {
+  const wanted = new Set(step?.events || []);
+  return rows.filter((row) => wanted.has(row.index)).map((row) => row.index);
+}

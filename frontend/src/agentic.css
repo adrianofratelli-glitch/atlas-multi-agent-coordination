@@ -59,7 +59,8 @@
 .stage-grid .suggestions-label { flex: 1 0 100%; }
 .stage-grid .suggestion-chip { flex: 0 1 auto; max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; line-height: 1.3; padding: 5px 11px; }
 
-.stage-center { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(280px, 1.3fr) minmax(0, 1fr); }
+/* Compact graph (~35% of the column) on top; the narrative below is the primary reading area. */
+.stage-center { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(210px, 35%) minmax(0, 1fr); }
 .stage-center > * { min-width: 0; }
 .stage-side { display: flex; flex-direction: column; }
 
@@ -72,10 +73,10 @@
 }
 
 /* ---------- live agent graph ---------- */
-.agent-graph { margin: 0; min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--border-subtle);
+.agent-graph { position: relative; margin: 0; min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--border-subtle);
   background: radial-gradient(ellipse at 50% 46%, rgba(0,104,74,.22), transparent 62%); }
 .agent-graph-svg { flex: 1 1 auto; min-height: 0; width: 100%; height: 100%; display: block; }
-@media (max-width: 899px) { .agent-graph-svg { height: auto; aspect-ratio: 7 / 4; } }
+@media (max-width: 899px) { .agent-graph-svg { height: auto; aspect-ratio: 720 / 260; } }
 .graph-orbit { fill: none; stroke: rgba(0,237,100,.12); stroke-width: 1; stroke-dasharray: 2 7; }
 .graph-spoke { stroke: rgba(253,255,245,.045); stroke-width: 1; }
 
@@ -122,34 +123,49 @@
 .edge-pulse { fill: var(--edge); }
 .graph-edge.is-fresh .edge-line { stroke-width: 2.6; }
 
-.agent-graph-caption { padding: 8px 14px 10px; display: grid; gap: 6px; }
-.graph-status { margin: 0; color: var(--text-sec); font-size: 13px; }
-.graph-path { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 0; font-size: 12px; color: var(--text-pri); }
+/* One compact line under the graph: status (full text in the tooltip), then the path in order. */
+.agent-graph-caption { flex: none; min-width: 0; padding: 3px 14px 6px; display: flex; flex-wrap: nowrap; align-items: baseline; gap: 14px; }
+.graph-status { flex: 1 1 0; min-width: 14ch; margin: 0; color: var(--text-sec); font-size: 12px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.graph-path { flex: 0 1 auto; min-width: 0; margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: nowrap; overflow: hidden; font-size: 12px; line-height: 1.4; color: var(--text-pri); white-space: nowrap; }
+.graph-path li { flex: none; }
+@media (max-width: 899px) {
+  /* stacked: the graph's height follows its width, so the caption can wrap */
+  .agent-graph-caption { flex-wrap: wrap; gap: 2px 14px; }
+  .graph-status { flex-basis: 100%; white-space: normal; }
+  .graph-path { flex-wrap: wrap; }
+}
 .graph-path li + li::before { content: '→'; margin: 0 8px; color: var(--accent); }
 .graph-path.is-parallel li + li::before { content: '+'; color: #b1ff05; }
-.graph-legend { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--text-muted); font-size: 11px; }
-.graph-legend li { display: inline-flex; align-items: center; gap: 6px; }
+/* Legend behind a "?" (top-right of the graph) so it never takes the graph's height. */
+.graph-legend-pop { position: absolute; top: 8px; right: 8px; z-index: 3; }
+.graph-legend-pop > summary { list-style: none; width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid var(--border-subtle); border-radius: 50%;
+  background: var(--bg-secondary); color: var(--text-sec); font: 600 13px var(--font-sans); cursor: pointer; transition: border-color .18s cubic-bezier(.2,.7,.2,1), color .18s; }
+.graph-legend-pop > summary::-webkit-details-marker { display: none; }
+.graph-legend-pop > summary:hover, .graph-legend-pop[open] > summary { border-color: var(--border-accent); color: var(--text-pri); }
+.graph-legend { position: absolute; top: 32px; right: 0; width: min(320px, calc(100vw - 40px)); margin: 0; padding: 10px 12px; list-style: none; display: grid; gap: 6px;
+  border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--bg-card); box-shadow: 0 12px 28px rgba(0,0,0,.35); color: var(--text-sec); font-size: 12px; }
+.graph-legend li { display: flex; align-items: center; gap: 8px; }
 .legend-line { stroke: var(--edge); stroke-width: 2; }
 .legend-badge { width: 13px; height: 13px; border-radius: 50%; display: inline-grid; place-items: center; font: 700 8.5px var(--font-mono); color: #001e2b; }
 .legend-badge--plan { background: var(--link); }
 .legend-badge--write { background: var(--orange); }
 .legend-badge--paused { background: transparent; border: 1.5px solid var(--orange); border-radius: 4px; }
-@media (max-width: 1100px) { .graph-legend { gap: 3px 10px; font-size: 10.5px; } }
 
 /* ---------- tabs under the graph ---------- */
 .stage-tabs { min-height: 0; display: flex; flex-direction: column; }
-.stage-tablist { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--border-subtle); overflow-x: auto; flex: none; }
-.stage-tablist button { flex: none; position: relative; padding: 10px 12px 9px; border: 0; background: transparent; color: var(--text-muted); font: 500 13px var(--font-sans); white-space: nowrap; }
+.stage-tablist { display: flex; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--border-subtle); overflow-x: auto; flex: none; scrollbar-width: thin; }
+.stage-tablist button { flex: none; position: relative; padding: 8px 10px 7px; border: 0; background: transparent; color: var(--text-muted); font: 500 12.5px var(--font-sans); white-space: nowrap; }
 .stage-tablist button:hover { color: var(--text-sec); }
 .stage-tablist button.is-on { color: var(--text-pri); }
 .stage-tablist button.is-on::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; background: var(--accent); border-radius: 2px; }
 .tab-count { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--bg-card); color: var(--text-muted); font: 500 10px var(--font-mono); }
-.stage-panel { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 14px; }
-.stage-panel .timeline { height: auto; max-height: none; padding: 0; }
+.stage-panel { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 12px 14px; scrollbar-width: thin; }
+.stage-panel.panel-narrativa { padding: 14px 16px 18px; }
+.stage-panel.panel-capo { padding: 0; }
 .stage-panel .empty-state { padding: 18px 0; }
 
 /* one line under the tabs: what the open panel shows */
-.stage-tab-hint { flex: none; margin: 0; padding: 7px 14px 0; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
+.stage-tab-hint { flex: none; margin: 0; padding: 6px 16px 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.4; }
 
 /* ---------- graph focus (hover/pin a step of the narrative) ---------- */
 .graph-node, .graph-edge { transition: opacity .18s cubic-bezier(.2,.7,.2,1); }
@@ -162,10 +178,10 @@
 
 /* ---------- "Como o time resolveu": numbered stepper of the turn ---------- */
 .narrative { margin: 0; padding: 2px 0 4px; list-style: none; display: grid; }
-.nstep { --dot: var(--accent); position: relative; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; padding: 0 6px 14px 0; border-radius: 10px; }
-.nstep::before { content: ''; position: absolute; left: 12px; top: 31px; bottom: 0; width: 2px; background: var(--border-subtle); }
+.nstep { --dot: var(--accent); position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; padding: 0 4px 12px 0; border-radius: 10px; cursor: pointer; }
+.nstep::before { content: ''; position: absolute; left: 13px; top: 38px; bottom: 0; width: 2px; background: var(--border-subtle); }
 .nstep:last-of-type::before { display: none; }
-.nstep-num { position: relative; z-index: 1; margin-top: 5px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+.nstep-num { position: relative; z-index: 1; margin-top: 8px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
   border: 1.5px solid var(--dot); background: var(--bg-secondary); color: var(--text-pri); font: 600 11.5px var(--font-mono); font-variant-numeric: tabular-nums; }
 .nstep.is-write { --dot: var(--orange); }
 .nstep.is-paused, .nstep.is-refused { --dot: var(--orange); }
@@ -173,34 +189,36 @@
 .nstep.is-blocked, .nstep.is-degraded { --dot: var(--danger); }
 .nstep.kind-guardrail.is-ok, .nstep.kind-guardrail_out.is-ok { --dot: var(--link); }
 .nstep.is-current .nstep-num { box-shadow: 0 0 0 4px var(--accent-glow); }
-.nstep-body { min-width: 0; padding: 0 10px 8px; border-radius: 10px; border: 1px solid transparent; transition: background-color .16s cubic-bezier(.2,.7,.2,1), border-color .16s; }
+.nstep-body { min-width: 0; padding: 6px 14px 12px; border-radius: 10px; border: 1px solid transparent; transition: background-color .16s cubic-bezier(.2,.7,.2,1), border-color .16s; }
 .nstep:hover .nstep-body, .nstep:focus-within .nstep-body { background: var(--bg-card); }
 .nstep.is-pinned .nstep-body { background: var(--bg-card); border-color: var(--border-accent); }
+/* the step of the capô row under the mouse */
+.nstep.is-linked .nstep-body { background: var(--bg-card); border-color: rgba(61,157,255,.55); }
 .nstep h4 { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.nstep-title { padding: 0; border: 0; background: none; color: var(--text-pri); font: 600 14px var(--font-sans); text-align: left; cursor: pointer; }
+.nstep-title { flex: 1 1 auto; min-width: 0; min-height: 30px; padding: 4px 0; border: 0; background: none; color: var(--text-pri); font: 600 15.5px/1.35 var(--font-sans); text-align: left; cursor: pointer; }
 .nstep-title:hover { color: var(--accent); }
-.nstep-status { padding: 1px 8px; border-radius: 999px; font: 500 11px var(--font-sans); }
+.nstep-status { flex: none; padding: 2px 9px; border-radius: 999px; font: 500 11.5px var(--font-sans); }
 .nstep-status.status-write, .nstep-status.status-paused, .nstep-status.status-refused { background: rgba(255,173,0,.14); color: #ffd27a; }
 .nstep-status.status-blocked, .nstep-status.status-degraded { background: rgba(255,105,96,.14); color: #ffa39d; }
-.nstep-task { margin: 3px 0 0; color: var(--text-muted); font-size: 12.5px; line-height: 1.45; }
-.nstep-text { margin: 0; color: var(--text-sec); font-size: 13.5px; line-height: 1.5; max-width: 72ch; }
-.nstep-items { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 3px; color: var(--text-sec); font-size: 13px; line-height: 1.45; }
+.nstep-task { margin: 2px 0 4px; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+.nstep-text { margin: 0; color: var(--text-sec); font-size: 14.5px; line-height: 1.55; max-width: 74ch; }
+.nstep-items { margin: 8px 0 0; padding-left: 22px; display: grid; gap: 4px; color: var(--text-sec); font-size: 14px; line-height: 1.5; }
 .nstep-items b { color: var(--text-pri); font-weight: 600; margin-right: 4px; }
-.nstep-note { margin: 5px 0 0; padding-left: 9px; border-left: 2px solid var(--orange); color: #ffd27a; font-size: 12.5px; line-height: 1.45; }
-.nstep-info { margin: 5px 0 0; color: var(--text-muted); font-size: 12.5px; line-height: 1.45; }
-.nstep-next { margin: 6px 0 0; color: var(--accent); font-size: 13px; line-height: 1.45; }
+.nstep-note { margin: 6px 0 0; padding-left: 10px; border-left: 2px solid var(--orange); color: #ffd27a; font-size: 13px; line-height: 1.5; }
+.nstep-info { margin: 6px 0 0; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+.nstep-next { margin: 8px 0 0; color: var(--accent); font-size: 14px; line-height: 1.5; }
 .nstep-next.is-revisit { color: #9ccbff; }
-.nstep-why { margin: 6px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; max-width: 76ch; }
+.nstep-why { margin: 8px 0 0; color: var(--text-muted); font-size: 13px; line-height: 1.55; max-width: 78ch; }
 .nstep-why span { color: var(--text-sec); font-weight: 600; }
-.nstep-mongo { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
-.nstep-ref { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; padding: 3px 9px; border: 1px solid var(--border-subtle); border-radius: 999px;
+.nstep-mongo { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.nstep-ref { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 30px; padding: 4px 11px; border: 1px solid var(--border-subtle); border-radius: 999px;
   color: var(--text-sec); font: 500 11px var(--font-sans); text-decoration: none; }
 .nstep-ref:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
-.nstep-ref code { color: var(--text-pri); font-size: 11px; overflow-wrap: anywhere; }
-.nstep-ref span { color: var(--accent); font: 500 10.5px var(--font-mono); }
+.nstep-ref code { color: var(--text-pri); font-size: 12px; overflow-wrap: anywhere; }
+.nstep-ref span { color: var(--accent); font: 500 11px var(--font-mono); }
 .nstep-ref.is-write { border-color: rgba(255,173,0,.45); }
 .nstep-ref:hover { border-color: var(--border-accent); }
-.nstep-pending { display: flex; align-items: center; gap: 8px; padding: 2px 0 6px 38px; color: var(--text-muted); font-size: 12px; }
+.nstep-pending { display: flex; align-items: center; gap: 8px; padding: 2px 0 6px 40px; color: var(--text-muted); font-size: 13px; }
 .hood-row.is-target { background: var(--accent-glow); box-shadow: inset 2px 0 var(--accent); }
 .hood-row:focus { outline: none; }
 
@@ -209,9 +227,35 @@
 .hood-head { padding: 12px 14px 10px; border-bottom: 1px solid var(--border-subtle); }
 .hood-head h3 { margin: 0; color: var(--text-pri); font-size: 15px; font-weight: 600; }
 .hood-head p { margin: 4px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.4; }
-.hood-list { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0; padding: 6px 0; list-style: none; }
+.hood-list { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; margin: 0; padding: 6px 0; list-style: none; scrollbar-width: thin; }
 .stage-panel .hood-list { overflow: visible; }
-.hood-row { padding: 8px 14px 8px 12px; border-left: 2px solid transparent; border-bottom: 1px solid rgba(42,66,77,.55); }
+.hood-row { padding: 8px 14px 6px 12px; border-left: 2px solid transparent; border-bottom: 1px solid rgba(42,66,77,.55);
+  transition: background-color .16s cubic-bezier(.2,.7,.2,1), opacity .16s cubic-bezier(.2,.7,.2,1); }
+/* linking with the narrative: the focused step's rows stand out, the others step back */
+.hood-row.is-linked { background: rgba(61,157,255,.08); box-shadow: inset 2px 0 var(--link); }
+.hood-list.has-link .hood-row:not(.is-linked) { opacity: .6; }
+.hood-list.has-link .hood-row:not(.is-linked):hover { opacity: 1; }
+/* events with no collection (guardrail of output, coordination...): lighter rows */
+.hood-row.is-event { padding-top: 6px; padding-bottom: 4px; background: rgba(6,22,33,.35); }
+.hood-cat { flex: none; padding: 1px 7px; border-radius: 999px; background: rgba(253,255,245,.05); color: var(--text-muted); font: 500 10px var(--font-mono); letter-spacing: .02em; }
+.hood-cat.cat-web { background: rgba(255,138,128,.12); color: #ff8a80; }
+.hood-cat.cat-guardrail { color: #ffd27a; }
+.hood-cat.cat-handoff, .hood-cat.cat-coordination { color: #8fe3b4; }
+.hood-event-title { min-width: 0; color: var(--text-sec); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.hood-more { margin-top: 2px; }
+.hood-more > summary { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 0; color: var(--text-muted); font-size: 11.5px; cursor: pointer; }
+.hood-more > summary:hover { color: var(--text-pri); }
+.hood-detail { margin: 4px 0 6px; padding: 9px 10px; border: 1px solid var(--border-subtle); border-radius: 10px; background: rgba(6,22,33,.55); display: grid; gap: 6px; min-width: 0; }
+.hood-detail-title { margin: 0; color: var(--text-pri); font-size: 12.5px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.hood-detail-meta { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; color: var(--text-muted); }
+.hood-detail-meta div { display: flex; gap: 5px; }
+.hood-detail-meta dd { margin: 0; color: var(--text-sec); }
+.hood-detail-meta code { font-size: 11px; }
+.hood-detail-result span { color: var(--text-muted); font-size: 11px; }
+.hood-detail-result pre { max-height: 220px; margin: 4px 0 0; padding: 8px; overflow: auto; color: #a9d6c0; background: #03111a; border-radius: 8px; font-size: 11px; line-height: 1.45; }
+.hood-detail .handoff-reason { margin: 0; color: var(--text-sec); font-size: 12px; font-style: italic; }
+.hood-detail .external-operation { font-size: 11px; }
+.hood-detail .external-operation code { font-size: 11px; }
 .hood-row.is-write { border-left-color: var(--orange); }
 .hood-row.is-external { border-left-color: var(--link); }
 .hood-row.is-replayed { opacity: .6; }
@@ -225,8 +269,8 @@
 .hood-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
 .hood-tag { padding: 1px 7px; border: 1px solid var(--border-subtle); border-radius: 999px; color: var(--text-muted); font: 500 10.5px var(--font-mono); }
 .hood-tag.is-native { border-color: var(--border-accent); color: var(--accent); }
-.hood-row details { margin-top: 4px !important; padding-top: 4px !important; border-top: 0 !important; }
-.hood-row details summary { font-size: 11px !important; }
+.hood-detail details { margin-top: 2px !important; padding-top: 4px !important; }
+.hood-detail details summary { font-size: 11px !important; }
 .hood-pending { display: flex; align-items: center; gap: 8px; padding: 10px 14px; color: var(--text-muted); font-size: 12px; }
 .hood-stream { flex: none; border-top: 1px solid var(--border-subtle); padding: 10px 14px 12px; }
 .hood-stream h4 { margin: 0 0 6px; color: var(--text-sec); font-size: 12px; font-weight: 600; }
@@ -467,7 +511,7 @@
   .edge-line { animation: none; stroke-dashoffset: 0; }
   .edge--return .edge-line { animation: none; opacity: 1; }
   .bar i, .switch span, .switch::before { transition: none; }
-  .graph-node, .graph-edge, .nstep-body { transition: none; }
+  .graph-node, .graph-edge, .nstep-body, .hood-row, .graph-legend-pop > summary { transition: none; }
 }
 @media (forced-colors: active) {
   .node-body { stroke: CanvasText; }

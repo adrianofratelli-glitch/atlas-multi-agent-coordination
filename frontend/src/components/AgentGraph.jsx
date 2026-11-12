@@ -1,10 +1,8 @@
-import { useMemo } from 'react';
-import { layoutGraph, edgePath, rectReach, describeTurn, fitText, nodeSubtitle, HUB } from '../graphModel.js';
+import { useEffect, useMemo, useRef } from 'react';
+import { layoutGraph, edgePath, rectReach, describeTurn, fitText, nodeSubtitle, HUB, GRAPH_SIZES } from '../graphModel.js';
 import { useReducedMotion } from '../hooks.js';
 
-const VIEW = { width: 700, height: 370 };
-const NODE = { w: 128, h: 44 };
-const HUB_NODE = { w: 154, h: 56 };
+const { VIEW, PAD_VIEW, NODE, HUB_NODE, PAD, FONT } = GRAPH_SIZES;
 const EDGE_KINDS = ['route', 'handoff', 'revisit', 'fanout', 'return', 'degraded'];
 const KIND_LABELS = {
   route: 'roteamento', handoff: 'handoff', revisit: 'retorno controlado', fanout: 'despacho paralelo',
@@ -15,9 +13,6 @@ function size(node) {
   return node.hub ? HUB_NODE : NODE;
 }
 
-// Text padding inside a node (viewBox units): keeps glyphs clear of the pill's rounded ends.
-const PAD = { label: 24, sub: 28 };
-const FONT = { label: 13.5, hubLabel: 15, sub: 10 };
 
 function LegendLine({ kind, dashed = false }) {
   return (
@@ -27,9 +22,23 @@ function LegendLine({ kind, dashed = false }) {
   );
 }
 
+// The legend lives behind a "?" so it never eats the graph's height; Escape or a click outside closes it.
 function Legend() {
+  const ref = useRef(null);
+  useEffect(() => {
+    const close = (event) => {
+      const node = ref.current;
+      if (!node?.open) return;
+      if (event.type === 'keydown' ? event.key === 'Escape' : !node.contains(event.target)) node.open = false;
+    };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', close);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close); };
+  }, []);
   return (
-    <ul className="graph-legend" aria-label="Legenda do grafo">
+    <details className="graph-legend-pop" ref={ref}>
+      <summary aria-label="Legenda do grafo" title="Legenda do grafo">?</summary>
+      <ul className="graph-legend" aria-label="Legenda do grafo">
       <li><LegendLine kind="route" />orquestrador escolhe quem começa</li>
       <li><LegendLine kind="handoff" />um agente passa a vez a outro</li>
       <li><LegendLine kind="revisit" />volta a um agente para confirmar</li>
@@ -39,7 +48,8 @@ function Legend() {
       <li><span className="legend-badge legend-badge--write" />gravou dado do cliente</li>
       <li><span className="legend-badge legend-badge--paused" />aguarda analista</li>
       <li><span className="legend-chip">2 tools</span>ferramentas usadas (passe o mouse no agente)</li>
-    </ul>
+      </ul>
+    </details>
   );
 }
 
@@ -49,7 +59,7 @@ function Legend() {
  */
 export default function AgentGraph({ agents = [], turn, live = false, labels = {}, highlight = null }) {
   const reducedMotion = useReducedMotion();
-  const graph = useMemo(() => layoutGraph(agents, { ...VIEW, padX: 80, padY: 46 }), [agents]);
+  const graph = useMemo(() => layoutGraph(agents, { ...VIEW, ...PAD_VIEW }), [agents]);
   const visitCounts = useMemo(() => (turn?.path || []).reduce((acc, key) => ({ ...acc, [key]: (acc[key] || 0) + 1 }), {}), [turn]);
   const edges = (turn?.edges || []).filter((edge) => graph.byKey[edge.from] && graph.byKey[edge.to]);
   const maxStep = edges.reduce((max, edge) => Math.max(max, edge.step), 0);
@@ -74,7 +84,7 @@ export default function AgentGraph({ agents = [], turn, live = false, labels = {
           ))}
         </defs>
 
-        <ellipse className="graph-orbit" cx={centre.x} cy={centre.y} rx={VIEW.width / 2 - 80} ry={VIEW.height / 2 - 46} />
+        <ellipse className="graph-orbit" cx={centre.x} cy={centre.y} rx={VIEW.width / 2 - PAD_VIEW.padX} ry={VIEW.height / 2 - PAD_VIEW.padY} />
         {graph.nodes.filter((node) => !node.hub).map((node) => (
           <line key={`spoke-${node.key}`} className="graph-spoke" x1={centre.x} y1={centre.y} x2={node.x} y2={node.y} />
         ))}
@@ -131,17 +141,17 @@ export default function AgentGraph({ agents = [], turn, live = false, labels = {
               <title>{tooltip}</title>
               {isActive && <rect className="node-pulse" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={(h + 10) / 2} />}
               <rect className="node-body" x={-w / 2} y={-h / 2} width={w} height={h} rx={node.hub ? 14 : h / 2} />
-              <text className="node-label" y={subText ? -2 : 4} textAnchor="middle">{label}</text>
-              {subText && <text className="node-sub" y={13} textAnchor="middle">{subText}</text>}
+              <text className="node-label" y={subText ? -1.5 : 4.5} textAnchor="middle">{label}</text>
+              {subText && <text className="node-sub" y={12.5} textAnchor="middle">{subText}</text>}
               {planStep && (
                 <g className="node-badge node-badge--plan" transform={`translate(${-w / 2 + 6} ${-h / 2 + 1})`}>
-                  <circle r="9" />
+                  <circle r="8.5" />
                   <text y="3.5" textAnchor="middle">{planStep}</text>
                 </g>
               )}
               {writes.length > 0 && (
                 <g className="node-badge node-badge--write" transform={`translate(${w / 2 - 6} ${-h / 2 + 1})`}>
-                  <circle r="9" />
+                  <circle r="8.5" />
                   <path d="M-4 4l.5-2.3 5-5a1 1 0 0 1 1.4 0l.4.4a1 1 0 0 1 0 1.4l-5 5z" />
                 </g>
               )}
@@ -159,14 +169,14 @@ export default function AgentGraph({ agents = [], turn, live = false, labels = {
           );
         })}
       </svg>
+      <Legend />
       <figcaption className="agent-graph-caption">
-        <p className="graph-status" aria-live="polite">{caption || 'Envie uma mensagem: o caminho do turno aparece neste grafo.'}</p>
+        <p className="graph-status" aria-live="polite" title={caption || undefined}>{caption || 'Envie uma mensagem: o caminho do turno aparece neste grafo.'}</p>
         {pathLabels.length > 0 && (
           <ol className={`graph-path ${turn?.fanout ? 'is-parallel' : ''}`} aria-label={turn?.fanout ? 'Agentes despachados em paralelo' : 'Ordem de atuação dos agentes'}>
             {pathLabels.map((name, index) => <li key={`${name}-${index}`}>{name}</li>)}
           </ol>
         )}
-        <Legend />
       </figcaption>
     </figure>
   );

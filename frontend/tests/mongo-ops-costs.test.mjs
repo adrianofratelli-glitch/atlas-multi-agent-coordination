@@ -60,3 +60,31 @@ test('economics report grouped per agent and per hour', () => {
   assert.equal(economicsByAgent(null).agents.length, 0);
   assert.equal(formatUsd(null), '—');
 });
+
+test('hoodRows keeps every event: MongoDB ops, external search (not MongoDB) and lighter turn events', async () => {
+  const { hoodRows, rowsForStep } = await import('../src/mongoOps.js');
+  const events = [
+    { category: 'guardrail', title: 'Guardrail de entrada', collection: 'guardrail_denylist', op: 'read' },
+    { category: 'handoff', agent: 'order_agent', title: 'Handoff explícito', result: { to_agent: 'logistics_agent' } },
+    { category: 'web', agent: 'logistics_agent', title: 'Busca web', op: 'external', filter: { provider: 'tavily', query: 'q' } },
+    { category: 'agent', agent: 'support_agent', title: 'old', collection: 'kb_articles', op: 'read', replayed: true },
+    { category: 'guardrail', title: 'Guardrail de saída', result: { blocked: false } },
+  ];
+  const rows = hoodRows(events);
+  assert.deepEqual(rows.map((r) => r.index), [0, 1, 2, 3, 4]);
+  assert.deepEqual(rows.map((r) => r.kind), ['op', 'event', 'external', 'op', 'event']);
+  assert.equal(rows[1].categoryLabel, 'coordenação');
+  assert.equal(rows[2].collection, 'tavily');
+  assert.ok(rows[2].tags.includes('fora do MongoDB'));
+  assert.equal(rows[3].replayed, true);
+  assert.equal(rows[4].title, 'Guardrail de saída');
+  assert.equal(rows[4].event, events[4], 'the row keeps the raw event for "ver detalhe"');
+  assert.deepEqual(rowsForStep({ events: [4, 1] }, rows), [1, 4], 'rows of a step come back in capô order');
+  assert.deepEqual(rowsForStep(null, rows), []);
+});
+
+test('result JSON in the detail masks secrets but keeps token counts', async () => {
+  const { redactResult } = await import('../src/redact.js');
+  assert.deepEqual(redactResult({ tokens_economizados: 1200, input_tokens: 9, email: 'a@b.c', token: 'abc', nested: { cpf: '1' } }),
+    { tokens_economizados: 1200, input_tokens: 9, email: '<mascarado>', token: '<mascarado>', nested: { cpf: '<mascarado>' } });
+});

@@ -75,9 +75,9 @@ frontend/
   src/graphModel.js             Puro: layout do grafo e derivação do turno (arestas, plano, escritas, pausa HITL) a partir dos eventos
   src/mongoOps.js, costs.js, redact.js   Puros: feed "Por baixo do capô", custo por agente, máscara de filtros
   src/agentic.css               Estilos das telas de coordenação (carregado depois do pov-signature.css)
-  src/components/ChatStage.jsx  Tela de Chat: conversa fixa, grafo ao vivo, abas Quadro/Execução/Custo/Memória, capô
+  src/components/ChatStage.jsx  Tela de Chat: conversa fixa, grafo compacto + narrativa (abas Quadro/Custo/Memória), capô ligado à narrativa
   src/components/AgentGraph.jsx Grafo SVG do turno (orquestrador no centro, especialistas do registry em volta)
-  src/components/UnderTheHood.jsx   "Por baixo do capô": operação MongoDB por evento, com o filtro real
+  src/components/UnderTheHood.jsx   "Por baixo do capô": uma linha por evento (operação MongoDB com o filtro real, fonte externa, evento sem coleção)
   src/components/BlackboardView.jsx Quadro do turno (`turn_blackboard`): plano + entradas por hop
   src/components/ChatPanel.jsx  Conversa, cartão "Aguardando analista" (HITL), roteiro rápido
   src/components/CostPanel.jsx  Custo do turno por agente (`llm_calls`) e por janela (`/api/economics`)
@@ -87,7 +87,7 @@ frontend/
   src/components/GuardrailsPanel.jsx    Eventos, candidatos e denylist de guardrail (admin)
   src/components/ComparePage.jsx    Aba "A/B": generalista × time na mesma pergunta (`POST /api/compare`)
   src/components/MetricsPage.jsx    Aba "Métricas": cartões, economia por agente, ledger por collection, eval
-  src/components/Timeline.jsx   Linha do tempo do turno (cada evento mostra agente, collection, operação)
+  src/components/EventDetail.jsx   "ver detalhe" de uma linha do capô (título, agente, duração, resultado mascarado, query)
   src/components/QueryDetails.jsx   Detalhe da consulta MongoDB de um evento
   src/components/ReplacementChain.jsx   Desenha a cadeia de trocas do $graphLookup
   src/components/CompliancePage.jsx     Aba "Decisões": trilha de auditoria e fila de revisão humana (aprovar/recusar escrita pausada)
@@ -113,12 +113,12 @@ Todas as chamadas HTTP do navegador saem de `frontend/src/api.js` (objeto `api`,
 | "Nova conversa" | `App.jsx::newConversation` | nenhuma | n/a | novo `conversation_id` no navegador | nenhum |
 | "Reiniciar memória da demo" | `App.jsx::resetDemoMemory` | `POST /api/demo/reset` | `demo_reset` | `demo_reset.py:12` `reset_customer_memory` | `customer_memory` (find_many, update_one, delete_many), `short_term_memory`, `long_term_memory`, `semantic_cache` |
 | Pílula "ao vivo" (Change Stream) | `App.jsx` (`connect` -> `api.streamEvents`; cada evento vai para `streamHandlerRef`: painel do capô e, se `from_agent` = `human_reviewer`, `syncResumedFromStore`) | `GET /api/events/stream` (SSE) | `events_stream` -> `_handoff_event_stream` | `database.py:466` `_watch_handoffs_atlas` | `watch` em `agent_handoffs`, filtrado por `customer_key` (`database.py:460`, `handoff_pipeline`) |
-| Grafo ao vivo e "Por baixo do capô" | `AgentGraph.jsx`, `UnderTheHood.jsx` (derivados por `graphModel.js::deriveTurn` e `mongoOps.js::mongoOps`) | nenhuma: eventos SSE do turno + resultado final (`agent_path`, `awaiting_approval`) | n/a | n/a | n/a (mostra o filtro real de cada operação) |
-| Abas sob o grafo: Quadro, Execução, Custo, Memória | `ChatStage.jsx` -> `BlackboardView.jsx`, `Timeline.jsx`, `CostPanel.jsx::TurnCost`, `TypedMemory.jsx` | `GET /api/blackboard/latest?conversation_id=`, `GET /api/memory-typed` | `latest_blackboard`, `typed_memory` | leitura direta | `turn_blackboard` find (último por `created_at`); `customer_memory`, `long_term_memory`, `agent_registry`, `routing_rules`, `hitl_policies` |
+| Grafo ao vivo e "Por baixo do capô" | `AgentGraph.jsx`, `UnderTheHood.jsx` (derivados por `graphModel.js::deriveTurn` e `mongoOps.js::hoodRows`) | nenhuma: eventos SSE do turno + resultado final (`agent_path`, `awaiting_approval`) | n/a | n/a | n/a (mostra o filtro real de cada operação) |
+| Abas sob a narrativa: Quadro, Custo, Memória | `ChatStage.jsx` -> `BlackboardView.jsx`, `CostPanel.jsx::TurnCost`, `TypedMemory.jsx` | `GET /api/blackboard/latest?conversation_id=`, `GET /api/memory-typed` | `latest_blackboard`, `typed_memory` | leitura direta | `turn_blackboard` find (último por `created_at`); `customer_memory`, `long_term_memory`, `agent_registry`, `routing_rules`, `hitl_policies` |
 | Escrita pausada: cartão "Aguardando analista" | `ChatPanel.jsx` (resultado com `awaiting_approval`) | nenhuma ao exibir; a retomada chega pelo Change Stream ou pelo `resumed_turn` do resolve | n/a | `orchestration_graph.py::_paused_output` | `pending_reviews` (aberta no hop), `turn_blackboard.status = awaiting_approval` |
 | "Simular queda e retomar do checkpoint" | `App.jsx::simulateCrash`, diálogo `CrashResume.jsx` | `POST /api/demo/crash-resume`, depois `GET /api/handoffs?conversation_id=` (conferência de duplicados) | `demo_crash_resume`, `handoffs` | `orchestration_graph.py::run_turn` (`crash_before_hop=1`, `turn_key`) + `resume_after_crash` (-> `continue_thread`) | `langgraph_checkpoints`, `agent_handoffs` find_many |
 | Aba "A/B" | `ComparePage.jsx` | `POST /api/compare` | `compare_architectures` | `compare.py::compare` (escritas simuladas, juiz LLM `judge.py::judge`) | leitura de `agent_registry`, `routing_rules`, `hitl_policies`, `agent_conversations`, `tool_registry` |
-| Timeline de um turno (clicar em um evento) | `Timeline.jsx`, `QueryDetails.jsx` | nenhuma (dados já vieram no turno) | n/a | n/a | n/a |
+| Detalhe de um evento do turno ("ver detalhe" no capô) | `EventDetail.jsx`, `QueryDetails.jsx` | nenhuma (dados já vieram no turno) | n/a | n/a | n/a |
 | Cadeia de trocas | `ReplacementChain.jsx`, usado em `BlackboardView.jsx` | nenhuma (vem no turno) | n/a | `graph.py:17` `build_order_chain_pipeline` | `$graphLookup` em `orders` |
 | Aba "Métricas" | `MetricsPage.jsx` | `GET /api/metrics`, `GET /api/economics?hours=N`; com modo admin `GET /api/eval/runs` | `get_metrics`, `get_economics`, `eval_runs` | `metrics`; `usage_ts.py::usage_report` | `llm_usage_ts` (agregação), `eval_runs` find_many; contadores em memória |
 | Aba "Agentes": liga/desliga agente, modelo, tools | `AgentsPage.jsx` (`patch`, `AgentCard`) | `GET /api/tools`, `PATCH /api/admin/agents/{agent_key}` (precisa `X-Admin-Key`) | `tool_catalog`, `update_agent` | `tools.py::tools_for` | `agent_registry` update_one (brain) + `admin_audit` insert_one |

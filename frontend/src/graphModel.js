@@ -8,6 +8,20 @@ export const HUMAN = 'human_reviewer';
 // Collections whose writes change the customer's world (the allowlist in AGENTS.md).
 export const BUSINESS_COLLECTIONS = new Set(['orders', 'support_tickets', 'redemptions', 'shipments', 'loyalty_accounts']);
 
+// Compact stage (2026-11): a wide, flat viewBox so the graph takes ~35% of the centre column and
+// the narrative gets the rest. Text is fitted in viewBox units (fitText), so it never crosses a node
+// at any viewport width; the layout keeps nodes, badges and the HITL tag inside the viewBox.
+export const GRAPH_SIZES = {
+  VIEW: { width: 720, height: 260 },
+  PAD_VIEW: { padX: 76, padY: 34 },
+  NODE: { w: 136, h: 40 },
+  HUB_NODE: { w: 150, h: 50 },
+  PAD: { label: 24, sub: 28 }, // text padding inside a node: glyphs clear of the pill's rounded ends
+  FONT: { label: 13.5, hubLabel: 15, sub: 10 },
+  BADGE_R: 8.5,
+  PAUSED_TAG: { offset: 13, w: 140, h: 20 },
+};
+
 // Stable clockwise order around the hub, so the same agent always sits in the same place.
 const SPECIALIST_ORDER = ['order_agent', 'billing_agent', 'warranty_agent', 'support_agent',
   'product_agent', 'loyalty_agent', 'logistics_agent'];

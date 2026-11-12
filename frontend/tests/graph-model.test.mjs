@@ -129,3 +129,32 @@ test('node text always fits inside the node (viewBox units)', async () => {
   assert.ok(fitText('Um rótulo de agente muito comprido', 104, 13.5).endsWith('…'));
   assert.ok(textWidth(fitText('Um rótulo de agente muito comprido', 104, 13.5), 13.5) <= 104);
 });
+
+test('compact layout: 8 nodes, badges and the HITL tag stay inside the viewBox; nodes never overlap', async () => {
+  const { GRAPH_SIZES: G, fitText, textWidth } = await import('../src/graphModel.js');
+  const team = ['orchestrator', 'order_agent', 'billing_agent', 'warranty_agent', 'support_agent', 'product_agent', 'loyalty_agent', 'logistics_agent']
+    .map((agent_key) => ({ agent_key, label: agent_key }));
+  const graph = layoutGraph(team, { ...G.VIEW, ...G.PAD_VIEW });
+  const boxes = graph.nodes.map((node) => {
+    const { w, h } = node.hub ? G.HUB_NODE : G.NODE;
+    return { key: node.key, x0: node.x - w / 2, x1: node.x + w / 2, y0: node.y - h / 2, y1: node.y + h / 2 };
+  });
+  for (const box of boxes) {
+    assert.ok(box.x0 >= 0 && box.x1 <= G.VIEW.width, `${box.key} x inside`);
+    assert.ok(box.y0 + 1 - G.BADGE_R >= 0, `${box.key} badge inside (top)`);
+    const tagBottom = box.y1 + G.PAUSED_TAG.offset + G.PAUSED_TAG.h / 2;
+    assert.ok(tagBottom <= G.VIEW.height, `${box.key} paused tag inside (bottom): ${tagBottom}`);
+    for (const other of boxes) {
+      if (other === box) continue;
+      const overlap = box.x0 < other.x1 && other.x0 < box.x1 && box.y0 < other.y1 && other.y0 < box.y1;
+      assert.ok(!overlap, `${box.key} overlaps ${other.key}`);
+    }
+  }
+  // Real labels fit even with a revisit suffix (" ×2"), so no agent name is cut in the compact graph.
+  for (const label of ['Pedidos', 'Cobrança', 'Garantia', 'Suporte', 'Produtos', 'Fidelidade', 'Logística']) {
+    const max = G.NODE.w - G.PAD.label - 3 * G.FONT.label * 0.6;
+    assert.equal(fitText(label, max, G.FONT.label), label);
+    assert.ok(textWidth(`${label} ×2`, G.FONT.label) <= G.NODE.w - G.PAD.label + 0.01);
+  }
+  assert.equal(fitText('Orquestrador', G.HUB_NODE.w - G.PAD.label, G.FONT.hubLabel), 'Orquestrador');
+});

@@ -83,7 +83,8 @@ function mongoRef(event, index) {
 
 /**
  * Steps of the turn, in the order things happened.
- * Each step: { id, kind, title, agent?, text, why, items?, next?, infos?, notes[], mongo[], status, focus }
+ * Each step: { id, kind, title, agent?, text, why, items?, next?, infos?, notes[], mongo[], events[], status, focus }
+ * - events: indices (in `events`) of every timeline event that fed this step, to link the capô rows
  * - infos: neutral context (e.g. cache miss); notes: things worth a warning colour (held/refused writes)
  * - status: ok | write | blocked | paused | degraded | refused
  * - focus: { nodes: [agent keys], edges: [{ from, to }] } for highlighting the graph
@@ -94,14 +95,23 @@ export function narrateTurn(events = [], { labels = {}, live = false } = {}) {
   const incoming = {};
   let pendingRefs = [];
 
+  // Which step each event fed (owner of the current event), so the capô can link back to the
+  // narrative. Events that arrive before their step exists (e.g. "Quadro do turno aberto") wait.
+  let pendingEvents = [];
+  let owner = null;
+  const PENDING = Symbol('pending');
+
   const push = (step) => {
-    const full = { notes: [], mongo: [], status: 'ok', focus: { nodes: [], edges: [] }, ...step };
+    const full = { notes: [], mongo: [], events: [], status: 'ok', focus: { nodes: [], edges: [] }, ...step };
     full.id = `${full.kind}-${steps.length}`;
     if (pendingRefs.length) { full.mongo = [...pendingRefs, ...full.mongo]; pendingRefs = []; }
+    if (pendingEvents.length) { full.events = [...pendingEvents]; pendingEvents = []; }
     steps.push(full);
+    owner = full;
     return full;
   };
   const addRef = (step, event, index) => {
+    owner = step || PENDING;
     const ref = mongoRef(event, index);
     if (!ref) return;
     if (!step) { pendingRefs.push(ref); return; }
@@ -111,7 +121,7 @@ export function narrateTurn(events = [], { labels = {}, live = false } = {}) {
   const lastOfKind = (kind) => [...steps].reverse().find((step) => step.kind === kind);
   const agentStep = (agent) => {
     const current = last();
-    if (current?.kind === 'agent' && current.agent === agent && !current.next) return current;
+    if (current?.kind === 'agent' && current.agent === agent && !current.next) { owner = current; return current; }
     const revisit = steps.some((step) => step.kind === 'agent' && step.agent === agent);
     return push({ kind: 'agent', agent, title: revisit ? `${name(agent)} (retorno)` : name(agent), verbs: [], writes: 0, task: null,
       focus: { nodes: [agent], edges: incoming[agent] ? [incoming[agent]] : [] } });
@@ -122,7 +132,7 @@ export function narrateTurn(events = [], { labels = {}, live = false } = {}) {
     if (isWrite) step.writes += 1;
   };
 
-  (events || []).forEach((event, index) => {
+  const handle = (event, index) => {
     if (!event || event.replayed) return;
     const result = event.result && typeof event.result === 'object' ? event.result : {};
     const title = event.title || '';
@@ -341,6 +351,13 @@ export function narrateTurn(events = [], { labels = {}, live = false } = {}) {
     if (NOTE_TITLE.test(title) && !step.notes.includes(title)) step.notes.push(title);
     if (/degradado/i.test(title)) step.status = 'degraded';
     if (event.collection !== 'multiagent_brain.agent_registry') addRef(step, event, index);
+  };
+
+  (events || []).forEach((event, index) => {
+    owner = null;
+    handle(event, index);
+    if (owner === PENDING) pendingEvents.push(index);
+    else if (owner && !owner.events.includes(index)) owner.events.push(index);
   });
 
   // Final wording of agent steps (verbs are collected while events stream in).
@@ -357,6 +374,13 @@ export function narrateTurn(events = [], { labels = {}, live = false } = {}) {
   }
   if (steps.length && live) steps[steps.length - 1].current = true;
   return steps;
+}
+
+/** Map timeline index → step that consumed it (capô row → narrative step). */
+export function stepByEvent(steps = []) {
+  const map = new Map();
+  for (const step of steps) for (const index of step.events || []) if (!map.has(index)) map.set(index, step);
+  return map;
 }
 
 /** Sentence for the "passou a vez" line under an agent step. */
