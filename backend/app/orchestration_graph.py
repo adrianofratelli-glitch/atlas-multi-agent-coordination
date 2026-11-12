@@ -648,7 +648,13 @@ async def n_agent_hop(state: TurnState, config) -> dict:
     web_tainted = state["web_tainted"] or result.tainted or any(
         event.op == "external" for event in [result.event, *result.extra_events])
     budget.reserve(current, estimate_tokens(result.response))
-    entry = blackboard.entry_for(hop, current, state.get("next_task_in"), result.mode, result.actions,
+    actions = result.actions
+    if result.mode == "deterministic":
+        # Runner determinístico não registra ações: deriva do que a timeline mostra que ele fez.
+        actions = [{"tool": f"{event.collection}.{event.op}", "effect": "write" if event.op == "write" else "read",
+                    "summary": event.title} for event in [result.event, *result.extra_events]
+                   if event.collection and event.op in ("read", "write", "vectorSearch", "hybridSearch", "graphLookup")]
+    entry = blackboard.entry_for(hop, current, state.get("next_task_in"), result.mode, actions,
                                  result.response, result.handoff_to)
     board = [*state["board"], entry]
     await blackboard.append_entry(svc.store, turn_id=state["turn_id"], customer_key=customer["customer_key"], entry=entry)

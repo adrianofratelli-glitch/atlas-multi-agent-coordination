@@ -201,7 +201,7 @@ class OrchestrationService:
         trace_url = await self._persist_trace(conversation_id, customer, masked, response, timeline, current, usage, (perf_counter() - started) * 1000, llm_calls=budget.llm_calls)
         await _record_collection_metrics(timeline)
         suggestions = await _next_steps(self.store, customer, covered={"order", "invoice"})
-        return self._response(budget, conversation_id=conversation_id, response=response, active_agent=current, route_source="fanout", cache_hit=False, cache_source=None, tokens_economizados=0, timeline=timeline, usage=usage, suggestions=suggestions, langfuse_trace_url=trace_url)
+        return self._response(budget, conversation_id=conversation_id, response=response, active_agent=current, route_source="fanout", cache_hit=False, cache_source=None, tokens_economizados=0, timeline=timeline, usage=usage, suggestions=suggestions, langfuse_trace_url=trace_url, agent_path=list(targets))
 
     async def _update_conversation(self, conversation_id: str, customer: dict, message: str | None, response: str, active_agent: str, handoffs: list[dict], timeline: list[TimelineEvent] | None = None) -> None:
         """Aplica só o DELTA deste turno via `update_one` atômico — nunca reescreve o documento inteiro.

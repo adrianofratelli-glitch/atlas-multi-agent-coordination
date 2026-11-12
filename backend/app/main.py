@@ -392,7 +392,9 @@ async def guardrails(view: str, store: DataStore = Depends(get_store)):
     if not collection:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "visão de guardrail desconhecida")
     items = await store.find_many(collection, {}, limit=100, sort=[("at" if view == "events" else "created_at", -1)])
-    return [{key: value for key, value in item.items() if key != "_id"} for item in items]
+    # `candidate_id` (o _id em texto) é o que POST .../candidates/{id}/approve espera.
+    return [{**{key: value for key, value in item.items() if key != "_id"},
+             **({"candidate_id": str(item["_id"])} if view == "candidates" and "_id" in item else {})} for item in items]
 
 
 # Teto de assinantes do feed ao vivo (ADR-009): cada assinante abre um change stream (um cursor
@@ -608,12 +610,18 @@ async def resolve_pending_review(request: Request, review_id: str, payload: Revi
 
 @app.post("/api/admin/guardrails/candidates/{candidate_id}/approve", dependencies=[Depends(require_admin)])
 async def approve_candidate(candidate_id: str, store: DataStore = Depends(get_store)):
-    candidate = await store.find_one("guardrail_candidates", {"_id": candidate_id})
+    candidate_key: object = candidate_id
+    try:
+        from bson import ObjectId
+        candidate_key = ObjectId(candidate_id) if ObjectId.is_valid(candidate_id) else candidate_id
+    except ImportError:  # pragma: no cover
+        pass
+    candidate = await store.find_one("guardrail_candidates", {"_id": candidate_key})
     if not candidate:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "candidato não encontrado")
     phrase = candidate["text"]
     await store.replace_one("guardrail_denylist", {"phrase_norm": phrase.lower()}, {"phrase": phrase, "phrase_norm": phrase.lower(), "active": True}, upsert=True)
-    await store.update_one("guardrail_candidates", {"_id": candidate_id}, {"$set": {"status": "approved"}})
+    await store.update_one("guardrail_candidates", {"_id": candidate_key}, {"$set": {"status": "approved"}})
     await store.insert_one("admin_audit", {"action": "guardrail.approve", "target": candidate_id, "at": utcnow()})
     return {"ok": True}
 
@@ -740,7 +748,8 @@ async def demo_crash_resume(request: Request, payload: ChatRequest,
         before = {"next_nodes": list(snapshot.next), "checkpoint_id": snapshot.config["configurable"].get("checkpoint_id"),
                   "hops_done": len((snapshot.values or {}).get("board") or [])}
         output = await orchestration_graph.resume_after_crash(service, customer, conversation_id)
-        handoffs = await store.find_many("agent_handoffs", {"conversation_id": conversation_id}, limit=20)
+        real_conversation = output.conversation_id if output else conversation_id
+        handoffs = await store.find_many("agent_handoffs", {"conversation_id": real_conversation}, limit=20)
         return {"crashed": True, "crash": crashed_at, "checkpoint_before_resume": before,
                 "handoffs_written": len(handoffs), "result": output.model_dump(mode="json") if output else None}
     return {"crashed": False, "note": "o turno terminou antes do 2º hop (cadeia de um agente)",

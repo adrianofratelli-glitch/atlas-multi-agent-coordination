@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import PageHead from './PageHead.jsx';
+import RichText from './RichText.jsx';
+import { LockIcon } from './Icons.jsx';
 
 const DECISIONS = [
   { value: 'quality_analysis', label: 'Análise de qualidade' },
@@ -7,7 +10,13 @@ const DECISIONS = [
   { value: 'refund', label: 'Reembolsar' },
   { value: 'reject', label: 'Recusar' },
 ];
-const DECISION_LABELS = Object.fromEntries(DECISIONS.map((item) => [item.value, item.label]));
+// Pausa real de escrita (LangGraph interrupt, ADR-012): o analista só aprova ou recusa a escrita pedida.
+const HITL_DECISIONS = [
+  { value: 'approve', label: 'Aprovar escrita' },
+  { value: 'reject', label: 'Recusar' },
+];
+const DECISION_LABELS = Object.fromEntries([...DECISIONS, ...HITL_DECISIONS].map((item) => [item.value, item.label]));
+const isInterrupt = (review) => review?.evidence?.kind === 'hitl_interrupt';
 const SEVERITY_LABELS = { info: 'info', warning: 'atenção', critical: 'crítico' };
 
 function formatDate(value) {
@@ -17,8 +26,9 @@ function formatDate(value) {
 }
 
 /** Fila do analista: os casos em que o agente PAROU e devolveu a decisão para um humano. */
-function ReviewQueue({ adminMode, onResolved }) {
+function ReviewQueue({ adminMode, onResolved, onResumed, labels = {}, refreshKey }) {
   const [reviews, setReviews] = useState([]);
+  const [resumed, setResumed] = useState(null);
   const [override, setOverride] = useState({});
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -37,16 +47,20 @@ function ReviewQueue({ adminMode, onResolved }) {
       setLoaded(true);
     }
   };
-  useEffect(() => { load(); }, [adminMode]);
+  useEffect(() => { load(); }, [adminMode, refreshKey]);
 
   const resolve = async (review, decision) => {
     setBusy(review.review_id);
     try {
-      await api.resolveReview(review.review_id, {
+      const resolved = await api.resolveReview(review.review_id, {
         decision,
         resolved_by: 'analista.qualidade',
         note: `Resolvido pelo painel: ${DECISION_LABELS[decision]}.`,
       });
+      if (isInterrupt(review)) {
+        setResumed({ review, decision, turn: resolved?.resumed_turn || null });
+        if (resolved?.resumed_turn) onResumed?.(resolved.resumed_turn);
+      }
       await load();
       onResolved?.();
     } catch (err) {
@@ -59,18 +73,30 @@ function ReviewQueue({ adminMode, onResolved }) {
   if (!adminMode) {
     return <p className="metric-empty">Ligue o modo admin acima para abrir a fila do analista.</p>;
   }
-  if (error) return <p className="metric-empty">{error}</p>;
+  const resumedCard = resumed && (
+    <article className="resumed-card" aria-live="polite">
+      <h4>{resumed.decision === 'approve' ? 'Escrita aprovada' : 'Escrita recusada'}: turno retomado do checkpoint</h4>
+      <p className="resumed-meta"><code>{resumed.review.review_id}</code> · {labels[resumed.review.agent] || resumed.review.agent} · conversa <code>{resumed.review.conversation_id}</code></p>
+      {resumed.turn
+        ? <div className="resumed-answer"><RichText text={resumed.turn.response} /></div>
+        : <p className="metric-empty">A decisão foi gravada, mas a retomada do turno não respondeu. Ela pode ser repetida: o checkpoint continua no Atlas.</p>}
+      <p className="resumed-foot">A tela do cliente recebe esta resposta pelo Change Stream em <code>agent_handoffs</code>.</p>
+    </article>
+  );
+  if (error) return <>{resumedCard}<p className="metric-empty">{error}</p></>;
   if (loaded && !reviews.length) {
     return (
-      <p className="metric-empty">
+      <>{resumedCard}<p className="metric-empty">
         Nenhum caso aguardando decisão humana. Pergunte pela garantia do pedido <code>PED-3001</code> como
-        a identidade <b>carla</b> — a cadeia de trocas dispara o gate.
-      </p>
+        a identidade <b>carla</b> — a cadeia de trocas dispara o gate. Para uma pausa de escrita, peça um
+        reembolso com o modelo ligado (ex.: <b>diego</b>, “solicite o reembolso do pedido PED-4001…”).
+      </p></>
     );
   }
 
   return (
     <>
+      {resumedCard}
       {typeof override.resolved === 'number' && override.resolved > 0 && (
         <div className="override-strip">
           <div><strong>{override.resolved}</strong><span>casos resolvidos</span></div>
@@ -79,10 +105,10 @@ function ReviewQueue({ adminMode, onResolved }) {
         </div>
       )}
       {reviews.map((review) => (
-        <article className="review-card" key={review.review_id}>
+        <article className={`review-card ${isInterrupt(review) ? 'is-interrupt' : ''}`} key={review.review_id}>
           <div className="review-head">
             <code>{review.review_id}</code>
-            <span className="review-status pending">aguardando decisão humana</span>
+            <span className="review-status pending">{isInterrupt(review) ? <><LockIcon size={12} /> escrita pausada no checkpoint</> : 'aguardando decisão humana'}</span>
             <small>{formatDate(review.created_at)}</small>
           </div>
           <div className="review-body">
@@ -92,6 +118,12 @@ function ReviewQueue({ adminMode, onResolved }) {
               <span><b>cliente</b> <code>{review.customer_key}</code></span>
               <span><b>escalado por</b> <code>{review.agent}</code></span>
             </div>
+            {isInterrupt(review) && (
+              <div className="review-evidence">
+                <span>escrita pedida</span>
+                <code>{review.evidence.tool}({JSON.stringify(review.evidence.args || {})})</code>
+              </div>
+            )}
             {review.evidence?.path?.length > 0 && (
               <div className="review-evidence">
                 <span>evidência ($graphLookup)</span>
@@ -106,18 +138,20 @@ function ReviewQueue({ adminMode, onResolved }) {
           </div>
           <div className="review-actions">
             <span className="review-recommendation">
-              agente recomendou: <b>{DECISION_LABELS[review.recommended_action] || review.recommended_action}</b>
+              {isInterrupt(review)
+                ? <>política <b>{(review.risk_factors || [])[0] || 'hitl'}</b> · o turno retoma ao decidir</>
+                : <>agente recomendou: <b>{DECISION_LABELS[review.recommended_action] || review.recommended_action}</b></>}
             </span>
             <div className="review-buttons">
-              {DECISIONS.map((option) => (
+              {(isInterrupt(review) ? HITL_DECISIONS : DECISIONS).map((option) => (
                 <button
                   type="button"
                   key={option.value}
-                  className={`review-btn ${option.value === review.recommended_action ? 'recommended' : ''}`}
+                  className={`review-btn ${option.value === review.recommended_action ? 'recommended' : ''} ${option.value === 'reject' ? 'is-reject' : ''}`}
                   disabled={busy === review.review_id}
                   onClick={() => resolve(review, option.value)}
                 >
-                  {option.label}
+                  {busy === review.review_id ? 'Retomando…' : option.label}
                 </button>
               ))}
             </div>
@@ -189,7 +223,7 @@ function DecisionTrail({ trail }) {
   );
 }
 
-export default function CompliancePage({ adminMode, setAdminMode, customerKey }) {
+export default function CompliancePage({ adminMode, setAdminMode, customerKey, onResumed, labels, refreshKey }) {
   const [trail, setTrail] = useState(null);
   const [error, setError] = useState('');
 
@@ -201,19 +235,14 @@ export default function CompliancePage({ adminMode, setAdminMode, customerKey })
       setError(err.message);
     }
   };
-  useEffect(() => { loadTrail(); }, [customerKey]);
+  useEffect(() => { loadTrail(); }, [customerKey, refreshKey]);
 
   return (
     <section className="full-page-section">
-      <div className="section-copy">
-        <span className="eyebrow">conformidade · registro imutável</span>
-        <h2>O agente para quando não deve decidir sozinho.</h2>
-        <p>
-          Observabilidade expira em 30 dias; decisão e auditoria ficam. Quando o caso exige um humano,
-          a pausa mora em um documento — não em uma conexão HTTP aberta — e a resolução devolve o caso
-          ao agente por um handoff real, que acorda a tela do cliente pelo Change Stream.
-        </p>
-      </div>
+      <PageHead source="pending_reviews · agent_decisions" title="O agente para quando não deve decidir sozinho">
+        Quando o caso exige um humano, a pausa mora no checkpoint do Atlas, não numa conexão HTTP aberta.
+        A decisão retoma o mesmo turno e acorda a tela do cliente pelo Change Stream.
+      </PageHead>
 
       <div className="compliance-block">
         <div className="panel-label">
@@ -225,7 +254,7 @@ export default function CompliancePage({ adminMode, setAdminMode, customerKey })
           </label>
           <code>pending_reviews</code>
         </div>
-        <ReviewQueue adminMode={adminMode} onResolved={loadTrail} />
+        <ReviewQueue adminMode={adminMode} onResolved={loadTrail} onResumed={onResumed} labels={labels} refreshKey={refreshKey} />
       </div>
 
       <div className="compliance-block">

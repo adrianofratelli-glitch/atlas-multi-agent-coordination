@@ -60,12 +60,27 @@ backend/
     warmup.py                   Aquecimento automático do cache semântico
   tests/                        pytest (offline) e tests/adversarial/ (ver seção 6)
 frontend/
-  src/App.jsx                   Tela inteira: abas Chat / Decisões / Métricas, chat, painel de agentes, métricas
+  src/App.jsx                   Estado da sessão e navegação: abas Chat / A/B / Agentes / Decisões / Métricas
   src/api.js                    Todas as chamadas HTTP e o stream SSE (URL base: VITE_API_URL, padrão 127.0.0.1:8031)
+  src/graphModel.js             Puro: layout do grafo e derivação do turno (arestas, plano, escritas, pausa HITL) a partir dos eventos
+  src/mongoOps.js, costs.js, redact.js   Puros: feed "Por baixo do capô", custo por agente, máscara de filtros
+  src/agentic.css               Estilos das telas de coordenação (carregado depois do pov-signature.css)
+  src/components/ChatStage.jsx  Tela de Chat: conversa fixa, grafo ao vivo, abas Quadro/Execução/Custo/Memória, capô
+  src/components/AgentGraph.jsx Grafo SVG do turno (orquestrador no centro, especialistas do registry em volta)
+  src/components/UnderTheHood.jsx   "Por baixo do capô": operação MongoDB por evento, com o filtro real
+  src/components/BlackboardView.jsx Quadro do turno (`turn_blackboard`): plano + entradas por hop
+  src/components/ChatPanel.jsx  Conversa, cartão "Aguardando analista" (HITL), roteiro rápido
+  src/components/CostPanel.jsx  Custo do turno por agente (`llm_calls`) e por janela (`/api/economics`)
+  src/components/TypedMemory.jsx    Memória semântica / episódica / procedural (`/api/memory-typed`)
+  src/components/CrashResume.jsx    Resultado de "Simular queda e retomar do checkpoint"
+  src/components/AgentsPage.jsx Aba "Agentes": registry editável (ativo, modelo, tools), políticas HITL, Guardrails
+  src/components/GuardrailsPanel.jsx    Eventos, candidatos e denylist de guardrail (admin)
+  src/components/ComparePage.jsx    Aba "A/B": generalista × time na mesma pergunta (`POST /api/compare`)
+  src/components/MetricsPage.jsx    Aba "Métricas": cartões, economia por agente, ledger por collection, eval
   src/components/Timeline.jsx   Linha do tempo do turno (cada evento mostra agente, collection, operação)
   src/components/QueryDetails.jsx   Detalhe da consulta MongoDB de um evento
   src/components/ReplacementChain.jsx   Desenha a cadeia de trocas do $graphLookup
-  src/components/CompliancePage.jsx     Aba "Decisões": trilha de auditoria e fila de revisão humana
+  src/components/CompliancePage.jsx     Aba "Decisões": trilha de auditoria e fila de revisão humana (aprovar/recusar escrita pausada)
   src/components/Inspector.jsx  Painel lateral "inspetor MongoDB" (não importado em nenhum lugar hoje; ver Dúvidas)
   src/execution.js, kbExplain.js, richtext.js   Funções puras de apoio
   tests/*.test.mjs              Testes JS (node --test)
@@ -80,23 +95,26 @@ Todas as chamadas HTTP do navegador saem de `frontend/src/api.js` (objeto `api`,
 
 | Tela / botão | Componente | Chamada HTTP | Handler | Função de negócio | MongoDB |
 |---|---|---|---|---|---|
-| Abrir o app | `App.jsx:306` (useEffect) -> `api.warmup()` + `switchIdentity` (282) | `POST /api/warmup`, `POST /api/auth/token`, `GET /api/health`, `/api/agents`, `/api/memory/{key}`, `/api/guardrails/events`, `/api/metrics`, `/api/conversations/latest`, `/api/demo-scenarios` | `main.py:241`, `139`, `528`, `266`, `337`, `388`, `500`, `286`, `272` | `warmup.WarmupService.run` (`warmup.py:62`); `security.issue_token` | `customers` find_one (`main.py:142`); `agent_registry` (brain) find; `customer_memory`; `guardrail_events`; `agent_conversations`, `agent_traces` |
-| Seletor "identidade" | `App.jsx:416` `switchIdentity` | idem acima | idem | idem | idem |
-| Chat: enviar (Enter / botão) e chips de sugestão | `App.jsx:377` `send` (chips: `ChatPanel` 89, `onSuggestion`) | `POST /api/chat/stream` (SSE, `api.js:chatStream`; cai para `POST /api/chat`) | `main.py:195` `chat_stream` / `main.py:188` `chat` -> `_run_chat` (160) | `orchestration_graph.py:697` `run_turn` (o grafo, ver 2.1) | ver 2.1 |
-| Chat: select "roteiro rápido" (cenários de demo) | `App.jsx:126-136` (só preenche a caixa de texto com `demo.message`; quem envia é o botão enviar) | nenhuma ao escolher; a lista veio de `GET /api/demo-scenarios` | `main.py:272` `demo_scenarios` | lê os cenários semeados de `seed_data.DEMO_SCENARIOS` | `find_many` em `demo_scenarios` (`main.py:274`) |
+| Abrir o app | `App.jsx:108` (useEffect) -> `api.warmup()` + `switchIdentity` (86) | `POST /api/warmup`, `POST /api/auth/token`, `GET /api/health`, `/api/agents`, `/api/graph/topology`, `/api/memory-typed`, `/api/metrics`, `/api/conversations/latest`, `/api/demo-scenarios` | `main.py:241`, `139`, `528`, `266`, `337`, `388`, `500`, `286`, `272` | `warmup.WarmupService.run` (`warmup.py:62`); `security.issue_token` | `customers` find_one (`main.py:142`); `agent_registry` (brain) find; `customer_memory`; `guardrail_events`; `agent_conversations`, `agent_traces` |
+| Seletor "identidade" | `App.jsx:300` `switchIdentity` | idem acima | idem | idem | idem |
+| Chat: enviar (Enter / botão) e chips de sugestão | `App.jsx:231` `send` (chips: `ChatPanel.jsx:33`, `onSuggestion`); depois do turno `afterTurn` (118) lê `GET /api/blackboard/latest`, `/api/memory-typed`, `/api/metrics` | `POST /api/chat/stream` (SSE, `api.js:chatStream`; cai para `POST /api/chat`) | `main.py:195` `chat_stream` / `main.py:188` `chat` -> `_run_chat` (160) | `orchestration_graph.py:697` `run_turn` (o grafo, ver 2.1) | ver 2.1 |
+| Chat: select "roteiro rápido" (cenários de demo) | `ChatPanel.jsx` (select "roteiro rápido"; só preenche a caixa de texto com `demo.message`; quem envia é o botão enviar) | nenhuma ao escolher; a lista veio de `GET /api/demo-scenarios` | `main.py:272` `demo_scenarios` | lê os cenários semeados de `seed_data.DEMO_SCENARIOS` | `find_many` em `demo_scenarios` (`main.py:274`) |
 | Chat: sugestões de próximos passos | `App.jsx` (resposta do turno traz `suggestions`) | no mesmo turno | `orchestration.py::_next_steps` (104) / `orchestration_graph.py:357` | monta passos pelo que ainda não foi coberto | `find_many` em pedidos/faturas (`guidance.py:37-60`) |
-| "Nova conversa" | `App.jsx:359` `newConversation` | nenhuma | n/a | novo `conversation_id` no navegador | nenhum |
-| "Reiniciar memória da demo" | `App.jsx:365` `resetDemoMemory` | `POST /api/demo/reset` | `main.py:250` `demo_reset` | `demo_reset.py:12` `reset_customer_memory` | `customer_memory` (find_many, update_one, delete_many), `short_term_memory`, `long_term_memory`, `semantic_cache` (`delete_many`, `demo_reset.py:22-28`) |
-| Pílula "ao vivo" (Change Stream) | `App.jsx:319` `connect` -> `api.streamEvents` | `GET /api/events/stream` (SSE) | `main.py:485` `events_stream` -> `_handoff_event_stream` (444) | `database.py:466` `_watch_handoffs_atlas` | `watch` em `agent_handoffs`, filtrado por `customer_key` (`database.py:460`) |
+| "Nova conversa" | `App.jsx:214` `newConversation` | nenhuma | n/a | novo `conversation_id` no navegador | nenhum |
+| "Reiniciar memória da demo" | `App.jsx:219` `resetDemoMemory` | `POST /api/demo/reset` | `main.py:250` `demo_reset` | `demo_reset.py:12` `reset_customer_memory` | `customer_memory` (find_many, update_one, delete_many), `short_term_memory`, `long_term_memory`, `semantic_cache` (`delete_many`, `demo_reset.py:22-28`) |
+| Pílula "ao vivo" (Change Stream) | `App.jsx:174` `connect` -> `api.streamEvents`; cada evento vai para `streamHandlerRef` (160): painel do capô e, se `from_agent` = `human_reviewer`, `syncResumedFromStore` (138) | `GET /api/events/stream` (SSE) | `main.py:485` `events_stream` -> `_handoff_event_stream` (444) | `database.py:466` `_watch_handoffs_atlas` | `watch` em `agent_handoffs`, filtrado por `customer_key` (`database.py:460`) |
+| Grafo ao vivo e "Por baixo do capô" | `AgentGraph.jsx`, `UnderTheHood.jsx` (derivados por `graphModel.js` e `mongoOps.js`) | nenhuma: eventos SSE do turno + resultado final (`agent_path`, `awaiting_approval`) | n/a | n/a | n/a (mostra o filtro real de cada operação) |
+| "Simular queda e retomar do checkpoint" | `App.jsx:248` `simulateCrash` | `POST /api/demo/crash-resume`, depois `GET /api/handoffs?conversation_id=` (conferência de duplicados) | `main.py` `demo_crash_resume` | `orchestration_graph.run_turn(crash_before_hop=1)` + `resume_after_crash` | `langgraph_checkpoints`, `agent_handoffs` |
+| Aba "A/B" | `ComparePage.jsx:65` | `POST /api/compare` | `main.py` `compare_architectures` | `compare.py` `compare` (escritas simuladas, juiz LLM) | leitura de registry, regras, políticas |
 | Timeline de um turno (clicar em um evento) | `Timeline.jsx`, `QueryDetails.jsx` | nenhuma (dados já vieram no turno) | n/a | n/a | n/a |
-| Cadeia de trocas | `ReplacementChain.jsx`, usado em `App.jsx` | nenhuma (vem no turno) | n/a | `graph.py:17` `build_order_chain_pipeline` | `$graphLookup` em `orders` |
-| Chat: handoffs da conversa da conversa | `App.jsx` (carrega depois do turno) | `GET /api/handoffs?conversation_id=` | `main.py:304` `handoffs` | leitura direta | `agent_handoffs` find_many (`main.py:308`) |
-| Aba "Métricas" | `App.jsx:173` `MetricsPage` | `GET /api/metrics`; com modo admin `GET /api/eval/runs` | `main.py:500`, `601` | `metrics`; economia por turno vem no próprio resultado | `eval_runs` find_many (`main.py:603`); contadores em memória |
-| Liga/desliga agente (`AgentsPage`, hoje NÃO renderizada na UI; só via API) | `App.jsx:141` `AgentsPage`, `toggle` (142) | `PATCH /api/admin/agents/{agent_key}` (precisa `X-Admin-Key`) | `main.py:546` `update_agent` | atualiza o agente | `agent_registry` update_one (brain) (`main.py:550`) + `admin_audit` insert_one (553) |
-| Aba "Decisões": trilha de auditoria | `CompliancePage.jsx:198` `loadTrail` | `GET /api/decisions` | `main.py:313` `decisions` | `decisions.py:149` `decision_trail` | `agent_decisions`, `agent_audit_events` find_many (`decisions.py:155-156`) |
-| Aba "Decisões": fila de revisão humana (modo admin) e botões de resolver | `CompliancePage.jsx:30` (lista), `45`/`118` (resolver) | `GET /api/admin/reviews`, `POST /api/admin/reviews/{id}/resolve`; cliente vê as suas em `GET /api/reviews` | `main.py:558`, `568`, `327` | `reviews.py:111` `resolve_review` | `pending_reviews` (find_one, `update_one` com claim `reviews.py:131`), `agent_decisions`/`agent_audit_events` insert, `agent_handoffs` insert (`reviews.py:178`), `admin_audit` |
-| Caixa "modo admin" (aba Decisões) | `CompliancePage.jsx:222` | nenhuma (guarda a chave admin do `.env` do frontend) | n/a | n/a | n/a |
-| Candidatas do guardrail (sem botão na UI; só API) | `api.js` não expõe | `GET /api/guardrails/candidates`, `POST /api/admin/guardrails/candidates/{id}/approve` | `main.py:388`, `589` | `guardrail_learning.py` | `guardrail_candidates`, `guardrail_denylist` (`replace_one` upsert, `main.py:594`) |
+| Cadeia de trocas | `ReplacementChain.jsx`, usado em `BlackboardView.jsx` | nenhuma (vem no turno) | n/a | `graph.py:17` `build_order_chain_pipeline` | `$graphLookup` em `orders` |
+| Handoffs da conversa (conferência do crash/resume) | `App.jsx:248` `simulateCrash` | `GET /api/handoffs?conversation_id=` | `main.py:304` `handoffs` | leitura direta | `agent_handoffs` find_many (`main.py:308`) |
+| Aba "Métricas" | `MetricsPage.jsx:4` | `GET /api/metrics`, `GET /api/economics?hours=N`; com modo admin `GET /api/eval/runs` | `main.py:500`, `601` | `metrics`; economia por turno vem no próprio resultado | `eval_runs` find_many (`main.py:603`); contadores em memória |
+| Aba "Agentes": liga/desliga agente, modelo, tools | `AgentsPage.jsx:97` (`patch`), `AgentCard` (26) | `GET /api/tools`, `PATCH /api/admin/agents/{agent_key}` (precisa `X-Admin-Key`); políticas: `GET`/`PATCH /api/admin/hitl-policies` | `main.py:546` `update_agent` | atualiza o agente | `agent_registry` update_one (brain) (`main.py:550`) + `admin_audit` insert_one (553) |
+| Aba "Decisões": trilha de auditoria | `CompliancePage.jsx:230` `loadTrail` | `GET /api/decisions` | `main.py:313` `decisions` | `decisions.py:149` `decision_trail` | `agent_decisions`, `agent_audit_events` find_many (`decisions.py:155-156`) |
+| Aba "Decisões": fila de revisão humana (modo admin) e botões de resolver | `CompliancePage.jsx:37` (lista), `52` (resolver; pausa real devolve `resumed_turn`, aplicado no chat por `App.jsx:129`) | `GET /api/admin/reviews`, `POST /api/admin/reviews/{id}/resolve`; cliente vê as suas em `GET /api/reviews` | `main.py:558`, `568`, `327` | `reviews.py:111` `resolve_review` | `pending_reviews` (find_one, `update_one` com claim `reviews.py:131`), `agent_decisions`/`agent_audit_events` insert, `agent_handoffs` insert (`reviews.py:178`), `admin_audit` |
+| Caixa "modo admin" (abas Agentes e Decisões) | `CompliancePage.jsx:250`, `AgentsPage.jsx:8` | nenhuma (guarda a chave admin do `.env` do frontend) | n/a | n/a | n/a |
+| Guardrails (aba Agentes, admin): eventos, candidatos, denylist; aprovar candidato segue só via API (a listagem não devolve `_id`) | `GuardrailsPanel.jsx:16` | `GET /api/guardrails/candidates`, `POST /api/admin/guardrails/candidates/{id}/approve` | `main.py:388`, `589` | `guardrail_learning.py` | `guardrail_candidates`, `guardrail_denylist` (`replace_one` upsert, `main.py:594`) |
 
 ### 2.1 O turno, nó por nó (`orchestration_graph.py`, `_build_graph` linha 632)
 
@@ -232,5 +250,5 @@ Avaliações (não são pytest): `python eval.py` (golden dataset, grava em `eva
 ## Observações sobre código sem uso na UI
 
 - `frontend/src/components/Inspector.jsx`, `api.inspector` e a rota `GET /api/inspector/{view}` (`main.py:356`, collections em `INSPECTOR_COLLECTIONS`, 347) existem, mas `App.jsx` não importa o `Inspector`; hoje só a API responde.
-- `AgentsPage` e `DataPage` estão definidas em `App.jsx` (141, 169) e não são renderizadas; por isso o liga/desliga de agente só funciona por `PATCH /api/admin/agents/{agent_key}`.
+- A aprovação de candidato de guardrail não tem botão: `GET /api/guardrails/candidates` remove o `_id`, que `POST /api/admin/guardrails/candidates/{id}/approve` exige.
 - `GET /api/economics` (`main.py:512`) não é chamado pelo frontend; o custo por turno vem no `run.economics` do próprio resultado.

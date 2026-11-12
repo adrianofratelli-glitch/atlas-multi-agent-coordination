@@ -1,12 +1,5 @@
-import React from 'react';
+import { redact } from '../redact.js';
 
-const SENSITIVE = /(?:authorization|password|secret|token|uri|cpf|cnpj|email|keymaterial)/i;
-function redact(value, key = '') {
-  if (SENSITIVE.test(key)) return '<mascarado>';
-  if (Array.isArray(value)) return value.map((item) => redact(item));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redact(v, k)]));
-  return value;
-}
 export default function QueryDetails({ query, operation, namespace, explain, note, label = 'Ver query / chamada executada' }) {
   if (!query && !operation) return null;
   const payload = typeof query === 'string' ? query : JSON.stringify(redact(query), null, 2);

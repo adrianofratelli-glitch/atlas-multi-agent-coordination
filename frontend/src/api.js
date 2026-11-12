@@ -9,9 +9,13 @@ async function boundedRequest(work, timeoutMs = 30000) {
 // `??`, not `||`: the Docker image builds with VITE_API_URL="" (same origin behind nginx).
 const BASE = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8031';
 
+const ADMIN = () => ({ 'X-Admin-Key': import.meta.env.VITE_ADMIN_KEY || '' });
+
 let token = localStorage.getItem('multi-agent-token') || '';
 
 async function request(path, options = {}) {
+  const { timeoutMs, ...fetchOptions } = options;
+  options = fetchOptions;
   return boundedRequest(async (signal) => {
     const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -27,7 +31,7 @@ async function request(path, options = {}) {
     });
     if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
     return data;
-  }, path === '/api/chat' ? 300000 : 30000)
+  }, timeoutMs ?? (path === '/api/chat' ? 300000 : 30000))
 }
 
 export const api = {
@@ -65,6 +69,26 @@ export const api = {
     method: 'POST',
     headers: { 'X-Admin-Key': import.meta.env.VITE_ADMIN_KEY || '' },
     body: JSON.stringify(body),
+    // uma pausa real (interrupt) retoma o turno inteiro antes de responder
+    timeoutMs: 300000,
+  }),
+  // Coordenação agêntica (ADR-011/012/013).
+  topology: () => request('/api/graph/topology'),
+  tools: () => request('/api/tools'),
+  blackboardLatest: (conversationId) => request(`/api/blackboard/latest?conversation_id=${encodeURIComponent(conversationId)}`),
+  memoryTyped: () => request('/api/memory-typed'),
+  economics: (hours = 24) => request(`/api/economics?hours=${encodeURIComponent(hours)}`),
+  hitlPolicies: () => request('/api/admin/hitl-policies', { headers: ADMIN() }),
+  updateHitlPolicy: (policyId, active) => request(`/api/admin/hitl-policies/${encodeURIComponent(policyId)}`, {
+    method: 'PATCH', headers: ADMIN(), body: JSON.stringify({ active }),
+  }),
+  approveGuardrailCandidate: (candidateId) => request(`/api/admin/guardrails/candidates/${encodeURIComponent(candidateId)}/approve`, {
+    method: 'POST', headers: ADMIN(),
+  }),
+  // A/B com LLM real leva de 30 a 90 s (dois braços + juiz): prazo próprio, sem reenvio automático.
+  compare: (message) => request('/api/compare', { method: 'POST', body: JSON.stringify({ message }), timeoutMs: 240000 }),
+  crashResume: (message, conversationId) => request('/api/demo/crash-resume', {
+    method: 'POST', body: JSON.stringify({ message, conversation_id: conversationId || null }), timeoutMs: 300000,
   }),
   // Turno com a timeline AO VIVO (POST /api/chat/stream): cada evento chega quando nasce no
   // servidor; o `result` final é idêntico ao do /api/chat. Sem stream (proxy, 404, rede), cai
