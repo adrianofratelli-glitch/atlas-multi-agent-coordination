@@ -223,7 +223,8 @@ async def search_kb_explained(store, message: str, *, agent_doc: dict | None = N
     # Método de fusão é dado (`retrieval.fusion.method`: "rank" | "score"), decidido por medição (ADR-006).
     fusion_block = _retrieval_block(agent_doc, "fusion")
     method = "score" if strategy == "scoreFusion" or (strategy is None and isinstance(fusion_block, dict)
-                                                      and fusion_block.get("method") == "score") else "rank"
+                                                      and fusion_block.get("method") == "score"
+                                                      and _capabilities.usable("score_fusion")) else "rank"
     out.config["method"] = method
 
     async def fused(*, rerank: dict | None, basic: bool) -> list[dict]:
@@ -262,9 +263,29 @@ async def search_kb_explained(store, message: str, *, agent_doc: dict | None = N
                     out.fallbacks.append("sinônimos/fuzzy: indisponíveis (cache de capability)")
             except Exception as exc:  # noqa: BLE001
                 kind = classify(exc)
-                out.fallbacks.append(f"rankFusion {kind}: {type(exc).__name__}")
-                articles = None
-                if rich:
+                if method == "score":
+                    # $scoreFusion indisponível (cluster < 8.3) não pode desligar o $rankFusion: capability
+                    # própria e nova tentativa com RRF no servidor.
+                    _cap_failed("score_fusion", exc)
+                    out.fallbacks.append(f"scoreFusion {kind}: {type(exc).__name__}")
+                    method = "rank"
+                    out.config["method"] = "rank"
+                    try:
+                        articles = await fused(rerank=None, basic=not rich)
+                        _capabilities.record_success("rank_fusion")
+                        if articles:
+                            out.articles, out.strategy = articles, "rankFusion" if rich else "rankFusion_basico"
+                    except Exception as exc_rank:  # noqa: BLE001
+                        exc = exc_rank
+                        kind = classify(exc)
+                if out.articles:
+                    articles = out.articles
+                else:
+                    out.fallbacks.append(f"rankFusion {kind}: {type(exc).__name__}")
+                    articles = None
+                if out.articles:
+                    pass               # o RRF no servidor salvou o turno depois do $scoreFusion
+                elif rich:
                     try:  # sem sinônimos e fuzzy: se ISTO funciona, o problema era a cláusula extra
                         articles = await fused(rerank=None, basic=True)
                         _capabilities.record_success("rank_fusion")

@@ -228,15 +228,22 @@ async def test_reembolso_pausa_no_interrupt_e_aprovacao_escreve_uma_unica_vez():
     review = await store.find_one("pending_reviews", {"review_id": review_id})
     assert review["evidence"]["kind"] == "hitl_interrupt" and review["evidence"]["args"]["status"] == "reembolsado"
     assert llm.rounds_of("order_agent") == 2
+    thread = review["evidence"]["thread_id"]
+    assert thread.startswith(f"ana:{paused.conversation_id}:") or thread.startswith(f"ana:{conv}:")
+    # review_id que não é o da pausa pendente nunca retoma (aprovar R1 não executa R2)
+    assert await orchestration_graph.resume_turn(service, thread, {"approved": True}, review_id="REV-OUTRA") is None
+    assert (await _order(store, "PED-1001"))["status"] == "enviado"
 
-    done = await orchestration_graph.resume_turn(service, ANA, conv, {"approved": True, "resolved_by": "x"})
-    assert done is not None and "aprovado" in done.response.lower()
+    done = await orchestration_graph.resume_turn(service, thread, {"approved": True, "resolved_by": "x"},
+                                                 review_id=review_id)
+    assert done is not None and "aprovado" in done.response.lower() and "x" not in done.response.split()
     assert (await _order(store, "PED-1001"))["status"] == "reembolsado"
     assert await _decisions(store, "PED-1001") == 1
     assert llm.rounds_of("order_agent") == 2   # o agente não roda de novo na retomada
 
-    assert await orchestration_graph.resume_turn(service, ANA, conv, {"approved": True, "resolved_by": "x"}) is None
+    assert await orchestration_graph.resume_turn(service, thread, {"approved": True}, review_id=review_id) is None
     assert await _decisions(store, "PED-1001") == 1
+    assert (await store.find_one("pending_reviews", {"review_id": review_id})).get("applied_at")
 
 
 async def test_reembolso_rejeitado_nao_altera_o_pedido():
@@ -244,7 +251,9 @@ async def test_reembolso_rejeitado_nao_altera_o_pedido():
     conv = _conv()
     paused = await orchestration_graph.run_turn(service, "quero reembolso do pedido PED-1001", ANA, conv)
     assert paused.awaiting_approval
-    done = await orchestration_graph.resume_turn(service, ANA, conv, {"approved": False, "note": "sem nota fiscal"})
+    review = await store.find_one("pending_reviews", {"review_id": paused.awaiting_approval["review_id"]})
+    done = await orchestration_graph.resume_turn(service, review["evidence"]["thread_id"],
+                                                 {"approved": False, "note": "sem nota fiscal"})
     assert done is not None and "não aprovou" in done.response
     assert (await _order(store, "PED-1001"))["status"] == "enviado"
     assert await _decisions(store, "PED-1001") == 0
@@ -255,7 +264,9 @@ async def test_politica_hitl_e_dado():
     from app.hitl import matching_policy
     assert matching_policy(DEFAULT_POLICIES, "request_order_status_change", {"status": "reembolsado"})["policy_id"] == "HITL-REEMBOLSO"
     assert matching_policy(DEFAULT_POLICIES, "request_order_status_change", {"status": "troca_solicitada"}) is None
-    assert matching_policy(DEFAULT_POLICIES, "redeem_reward", {"points": 1000})["policy_id"] == "HITL-RESGATE-ALTO"
+    resgate = [{**p, "active": True} for p in DEFAULT_POLICIES]   # seed liga desligada; o admin liga ao vivo
+    assert matching_policy(resgate, "redeem_reward", {"points": 500})["policy_id"] == "HITL-RESGATE-ALTO"
+    assert matching_policy(resgate, "redeem_reward", {"points": 300}) is None
     assert matching_policy([{**DEFAULT_POLICIES[0], "active": False}], "request_order_status_change",
                            {"status": "reembolsado"}) is None
 
@@ -273,14 +284,16 @@ async def test_queda_entre_hops_retoma_sem_repetir_a_escrita_do_primeiro_hop():
         "logistics_agent": [msg(use("get_shipment", order_id="PED-1001")), msg(text("Entrega em São Paulo."))],
     })
     conv = _conv()
+    thread = orchestration_graph.checkpoint_thread_id(ANA, conv, "crash1")
     with pytest.raises(orchestration_graph.SimulatedCrash):
-        await orchestration_graph.run_turn(service, "quero trocar o pedido PED-1001", ANA, conv, crash_before_hop=1)
+        await orchestration_graph.run_turn(service, "quero trocar o pedido PED-1001", ANA, conv, crash_before_hop=1,
+                                           turn_key="crash1")
     assert (await _order(store, "PED-1001"))["status"] == "troca_solicitada"
     decisions_before = await store.find_many("agent_decisions", {"subject_id": "PED-1001"}, limit=50)
     order_rounds = llm.rounds_of("order_agent")
     assert order_rounds == 3 and llm.rounds_of("logistics_agent") == 0
 
-    done = await orchestration_graph.resume_after_crash(service, ANA, conv)
+    done = await orchestration_graph.resume_after_crash(service, thread)
     assert done is not None and done.agent_path == ["order_agent", "logistics_agent"]
     assert llm.rounds_of("order_agent") == order_rounds and llm.rounds_of("logistics_agent") == 2
     assert len(await store.find_many("agent_decisions", {"subject_id": "PED-1001"}, limit=50)) == len(decisions_before)
@@ -429,3 +442,79 @@ async def test_agent_tool_calling_0_forca_o_caminho_deterministico(monkeypatch):
     monkeypatch.delenv("AGENT_TOOL_CALLING")
     plain = LLMGateway(Settings(demo_mode=True))
     assert await agent_loop.run_tool_agent(**{**kwargs, "llm": plain}) is None
+
+
+# ------------------------------------------------------------------- achados da revisão (2026-11-12)
+
+async def test_duas_pausas_na_mesma_conversa_tem_threads_e_revisoes_proprias():
+    store, llm, service = await _world({"order_agent": [
+        msg(use("request_order_status_change", order_id="PED-1001", status="reembolsado")),
+        msg(use("request_order_status_change", order_id="PED-1002", status="reembolsado")),
+    ]})
+    conv = _conv()
+    first = await orchestration_graph.run_turn(service, "quero reembolso do pedido PED-1001", ANA, conv)
+    second = await orchestration_graph.run_turn(service, "quero reembolso do pedido PED-1002", ANA,
+                                                first.conversation_id)
+    r1 = await store.find_one("pending_reviews", {"review_id": first.awaiting_approval["review_id"]})
+    r2 = await store.find_one("pending_reviews", {"review_id": second.awaiting_approval["review_id"]})
+    assert r1["review_id"] != r2["review_id"] and r1["evidence"]["thread_id"] != r2["evidence"]["thread_id"]
+    done = await orchestration_graph.resume_turn(service, r1["evidence"]["thread_id"], {"approved": True},
+                                                 review_id=r1["review_id"])
+    assert done is not None
+    assert (await _order(store, "PED-1001"))["status"] == "reembolsado"
+    assert (await _order(store, "PED-1002"))["status"] != "reembolsado"   # a aprovação de R1 não vale para R2
+
+
+async def test_pergunta_nao_e_pedido_de_escrita():
+    store, _, _ = await _world()
+    for message in ("como faço para trocar o pedido PED-1001?", "quero trocar meus pontos do pedido PED-1001"):
+        ctx = _ctx(store, message)
+        result = await tools_module.execute(ctx, "request_order_status_change",
+                                            {"order_id": "PED-1001", "status": "troca_solicitada"})
+        assert result.is_error, message
+    assert (await _order(store, "PED-1001"))["status"] == "enviado"
+
+
+async def test_escrita_so_no_pedido_que_o_cliente_citou():
+    store, _, _ = await _world()
+    ctx = _ctx(store, "quero trocar o pedido PED-1001")
+    result = await tools_module.execute(ctx, "request_order_status_change",
+                                        {"order_id": "PED-1012", "status": "troca_solicitada"})
+    assert result.is_error and (await _order(store, "PED-1012"))["status"] != "troca_solicitada"
+
+
+async def test_argumento_extra_do_modelo_e_descartado():
+    store, _, _ = await _world()
+    ctx = _ctx(store, "onde está o pedido PED-1001")
+    await tools_module.execute(ctx, "get_order", {"order_id": "PED-1001", "customer_key": "bruno", "x": "y"})
+    assert ctx.events and ctx.events[0].filter.get("owner_customer_key") == "ana"
+
+
+async def test_desligar_todas_as_politicas_desliga_de_verdade():
+    from app.hitl import load_policies
+    store, _, _ = await _world()
+    for policy in await store.find_many("hitl_policies", {}, brain=True, limit=10):
+        await store.update_one("hitl_policies", {"policy_id": policy["policy_id"]}, {"$set": {"active": False}}, brain=True)
+    assert await load_policies(store) == []
+
+
+async def test_score_fusion_indisponivel_cai_para_rank_fusion_sem_desligar_o_rrf():
+    from app import retrieval
+
+    class FakeStore:
+        memory = False
+        calls: list = []
+
+        async def aggregate(self, collection, pipeline):
+            FakeStore.calls.append(next(iter(pipeline[0])))
+            if "$scoreFusion" in pipeline[0]:
+                raise RuntimeError("unsupported stage")
+            return [{"article_id": "KB-001", "title": "t", "content": "c"}]
+
+    retrieval._capabilities.reset()
+    found = await retrieval.search_kb_explained(FakeStore(), "fone sem audio",
+                                                agent_doc={"retrieval": {"fusion": {"method": "score"}}})
+    assert found.articles and found.strategy in ("rankFusion", "rankFusion_basico")
+    assert FakeStore.calls[:2] == ["$scoreFusion", "$rankFusion"]
+    assert retrieval._capabilities.usable("rank_fusion") and not retrieval._capabilities.usable("score_fusion")
+    retrieval._capabilities.reset()

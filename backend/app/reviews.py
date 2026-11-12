@@ -49,11 +49,15 @@ async def open_review(
     reasoning: str,
     risk_factors: list[str] | None = None,
     evidence: dict[str, Any] | None = None,
+    turn_id: str | None = None,
 ) -> dict | None:
     """Abre a pausa. Idempotente por (subject_id, action): reabrir o mesmo caso não empilha
     duas revisões pendentes para o analista resolver duas vezes."""
+    # Pausa HITL é por TURNO (`turn_id`): dois pedidos do mesmo assunto em turnos diferentes são duas
+    # pausas, cada uma com a sua thread; sem turno, vale a idempotência por assunto (revisão de qualidade).
     existing = await store.find_one(REVIEWS_COLLECTION, {
         "subject_id": subject_id, "action": action, "customer_key": customer_key, "status": "pending",
+        **({"turn_id": turn_id} if turn_id else {}),
     })
     if existing:
         return {key: value for key, value in existing.items() if key != "_id"}
@@ -70,6 +74,7 @@ async def open_review(
         "risk_factors": risk_factors or [],
         "evidence": evidence or {},
         "status": "pending",
+        **({"turn_id": turn_id} if turn_id else {}),
         "human_decision": None,
         "resolved_by": None,
         "resolved_at": None,

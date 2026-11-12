@@ -34,6 +34,7 @@ from .security import current_customer, issue_token, request_identity_key, requi
 
 settings = get_settings()
 limiter = SlidingWindowLimiter(settings.rate_limit_requests, settings.rate_limit_window_seconds)
+compare_limiter = SlidingWindowLimiter(3, 60)
 logger = logging.getLogger("multi-agent-poc")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -595,17 +596,41 @@ async def resolve_pending_review(request: Request, review_id: str, payload: Revi
     if evidence.get("kind") == "hitl_interrupt":
         # Pausa de verdade (LangGraph interrupt): retoma o MESMO thread do checkpoint com a decisão.
         from . import orchestration_graph
-        customer = await store.find_one("customers", {"customer_key": resolved["customer_key"]})
         decision = {"approved": payload.decision in ("approve", "approve_replacement", "refund"),
                     "resolved_by": payload.resolved_by, "note": payload.note}
         try:
-            output = await orchestration_graph.resume_turn(request.app.state.orchestrator, customer,
-                                                           resolved["conversation_id"], decision)
+            # Thread GRAVADA na revisão (uma por turno) + conferência do review_id da pausa pendente.
+            output = await orchestration_graph.resume_turn(request.app.state.orchestrator, evidence["thread_id"],
+                                                           decision, review_id=review_id)
         except Exception as exc:  # noqa: BLE001 — a decisão humana já está gravada; a retomada pode ser repetida
             log("hitl_resume_failed", review_id=review_id, error=type(exc).__name__)
             output = None
         resolved["resumed_turn"] = output.model_dump(mode="json") if output else None
+        if output:
+            # Avisa a tela do cliente DEPOIS de a resposta retomada estar gravada (o handoff do revisor,
+            # gravado na transação da decisão, chega antes dela).
+            await store.insert_one("agent_handoffs", {
+                "conversation_id": output.conversation_id, "customer_key": resolved["customer_key"],
+                "from_agent": resolved.get("agent") or "order_agent", "to_agent": "orchestrator",
+                "reason": "turno retomado após decisão humana", "at": utcnow()})
     return resolved
+
+
+@app.post("/api/admin/reviews/{review_id}/continue", dependencies=[Depends(require_admin)])
+async def continue_review_turn(request: Request, review_id: str, store: DataStore = Depends(get_store)):
+    """Repete a retomada de um turno cuja escrita aprovada falhou (o nó `apply_approved` é idempotente)."""
+    from . import orchestration_graph
+    review = await store.find_one("pending_reviews", {"review_id": review_id})
+    thread_id = ((review or {}).get("evidence") or {}).get("thread_id")
+    if not review or review.get("status") != "resolved" or not thread_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "revisão resolvida com turno pausado não encontrada")
+    try:
+        output = await orchestration_graph.continue_thread(request.app.state.orchestrator, thread_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"retomada falhou: {type(exc).__name__}") from exc
+    if output is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "nada a retomar nesta thread")
+    return output.model_dump(mode="json")
 
 
 @app.post("/api/admin/guardrails/candidates/{candidate_id}/approve", dependencies=[Depends(require_admin)])
@@ -711,16 +736,26 @@ async def update_hitl_policy(policy_id: str, payload: HitlPolicyUpdate, store: D
 async def compare_architectures(request: Request, payload: CompareRequest,
                                 customer: Annotated[dict, Depends(current_customer)], store: DataStore = Depends(get_store)):
     """A/B single × multi na mesma pergunta, com escritas simuladas e juiz LLM."""
-    if not limiter.allow(request_identity_key(request, f"compare:{customer['customer_key']}")):
-        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "limite de requisições excedido")
+    # Limite próprio: um A/B custa ~2 turnos + 2 juízes.
+    if not compare_limiter.allow(request_identity_key(request, f"compare:{customer['customer_key']}")):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "limite do A/B excedido (3 por minuto)")
+    from .budget import TurnBudget
     from .compare import compare
     from .guardrails import check_input
-    guard = await check_input(store, payload.message, customer, llm=request.app.state.orchestrator.llm, budget=None,
-                              agent_doc=None, skip_semantic=True)
+    llm = request.app.state.orchestrator.llm
+    orchestrator_doc = await store.find_one("agent_registry", {"agent_key": "orchestrator"}, brain=True)
+    guard = await check_input(store, payload.message, customer, llm=llm, budget=TurnBudget(20000, {"orchestrator": 20000}),
+                              agent_doc={k: v for k, v in (orchestrator_doc or {}).items() if k != "_id"} or None)
     if guard.blocked:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "mensagem bloqueada pela política de segurança")
-    return await asyncio.wait_for(compare(store, request.app.state.orchestrator.llm, customer, payload.message),
-                                  timeout=settings.turn_deadline_seconds * 2)
+    try:
+        return await asyncio.wait_for(compare(store, llm, customer, payload.message),
+                                      timeout=settings.turn_deadline_seconds * 2)
+    except (TimeoutError, BudgetExceeded) as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"A/B não concluiu: {type(exc).__name__}") from exc
+    except Exception as exc:  # noqa: BLE001 — degradação, nunca 500
+        log("compare_failed", error=type(exc).__name__)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "A/B indisponível agora") from exc
 
 
 @app.post("/api/demo/crash-resume")
@@ -736,24 +771,31 @@ async def demo_crash_resume(request: Request, payload: ChatRequest,
     from . import orchestration_graph
     service = request.app.state.orchestrator
     conversation_id = payload.conversation_id or f"conv-{uuid.uuid4().hex[:12]}"
-    crashed_at = None
+    turn_key = uuid.uuid4().hex[:12]
+    thread_id = orchestration_graph.checkpoint_thread_id(customer, conversation_id, turn_key)
     try:
         output = await orchestration_graph.run_turn(service, payload.message, customer, conversation_id,
-                                                    crash_before_hop=1)
+                                                    crash_before_hop=1, turn_key=turn_key)
+        return {"crashed": False, "note": "o turno terminou antes do 2º hop (cadeia de um agente)",
+                "result": output.model_dump(mode="json")}
     except orchestration_graph.SimulatedCrash as exc:
         crashed_at = str(exc)
+    except Exception as exc:  # noqa: BLE001 — demo nunca vira 500
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"turno falhou: {type(exc).__name__}") from exc
+    try:
         graph = orchestration_graph.get_graph(store.settings)
-        config = {"configurable": {"thread_id": orchestration_graph.checkpoint_thread_id(customer, conversation_id)}}
-        snapshot = await graph.aget_state(config)
+        snapshot = await graph.aget_state({"configurable": {"thread_id": thread_id}})
         before = {"next_nodes": list(snapshot.next), "checkpoint_id": snapshot.config["configurable"].get("checkpoint_id"),
                   "hops_done": len((snapshot.values or {}).get("board") or [])}
-        output = await orchestration_graph.resume_after_crash(service, customer, conversation_id)
-        real_conversation = output.conversation_id if output else conversation_id
-        handoffs = await store.find_many("agent_handoffs", {"conversation_id": real_conversation}, limit=20)
-        return {"crashed": True, "crash": crashed_at, "checkpoint_before_resume": before,
-                "handoffs_written": len(handoffs), "result": output.model_dump(mode="json") if output else None}
-    return {"crashed": False, "note": "o turno terminou antes do 2º hop (cadeia de um agente)",
-            "result": output.model_dump(mode="json")}
+        output = await orchestration_graph.resume_after_crash(service, thread_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"retomada falhou: {type(exc).__name__}") from exc
+    real_conversation = output.conversation_id if output else conversation_id
+    handoffs = await store.find_many("agent_handoffs", {"conversation_id": real_conversation}, limit=20)
+    pairs = [(h["from_agent"], h["to_agent"]) for h in handoffs]
+    return {"crashed": True, "crash": crashed_at, "checkpoint_before_resume": before,
+            "handoffs_written": len(handoffs), "duplicated_handoffs": len(pairs) - len(set(pairs)),
+            "result": output.model_dump(mode="json") if output else None}
 
 
 # ---------------------------------------------------------------- A2A (Agent2Agent 1.0): agentes como cards

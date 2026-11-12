@@ -108,6 +108,8 @@ class TurnState(TypedDict, total=False):
     next_task_in: Optional[str]
     pending_action: Optional[dict]
     turn_id: str
+    thread_id: str
+    approval_decision: Optional[dict]
     detected: dict
     hitl_policies: list
     touched: dict
@@ -274,8 +276,11 @@ async def n_fanout_check(state: TurnState, config) -> dict:
     rules = await svc.store.find_many("routing_rules", {}, brain=True, limit=100)
     fanout_targets = detect_fanout(state["masked"], rules)
     from .agents import _requested_status
-    if fanout_targets and _requested_status(state["masked"]) == "reembolsado":
-        # Reembolso passa pela cadeia, onde existe a pausa para aprovação humana (o fan-out não pausa).
+    from .hitl import load_policies, matching_policy
+    requested = _requested_status(state["masked"])
+    if fanout_targets and requested and matching_policy(await load_policies(svc.store), "request_order_status_change",
+                                                        {"status": requested}):
+        # Escrita sujeita a aprovação humana passa pela cadeia, onde existe a pausa (o fan-out não pausa).
         fanout_targets = None
     if fanout_targets and all(target in state["registry"] for target in fanout_targets):
         return {"fanout_targets": fanout_targets}
@@ -557,9 +562,9 @@ async def n_agent_hop(state: TurnState, config) -> dict:
     masked, conversation_id, decision = state["masked"], state["conversation_id"], state["decision"]
     timeline, responses, tail = state["timeline"], list(state["responses"]), list(state["tail_notes"])
     current, hop = state["current"], state["hop"]
+    # Só a execução que recebeu `crash_before_hop` cai; a retomada (`continue_thread`) não o repassa.
     crash_at = config["configurable"].get("crash_before_hop")
-    if crash_at is not None and hop == crash_at and not config["configurable"].get("_crashed"):
-        config["configurable"]["_crashed"] = True
+    if crash_at is not None and hop == crash_at:
         raise SimulatedCrash(f"queda simulada antes do hop {hop}")
     out: dict = {"next_agent": None, "next_task": None, "pending_action": None}
     runner = RUNNERS.get(current)
@@ -606,11 +611,13 @@ async def n_agent_hop(state: TurnState, config) -> dict:
     hint = (state["first_hint"] if hop == 0 else "") + (("\n" + board_summary) if board_summary else "")
     targets = _handoff_targets(state, current)
     agent_doc = registry.get(current)
+    ctx_sink: list = []   # o ToolContext do hop, visível mesmo se o timeout cancelar o loop
     with observability.span("agent", agent=current, conversation_id=conversation_id, hop=hop, intent=decision.intent):
         async def _run_agent():
             await chaos.hook("agent", name=current)
             calls_before = len(budget.llm_calls)
             result = await agent_loop.run_tool_agent(
+                ctx_sink=ctx_sink,
                 store=svc.store, llm=svc.llm, budget=budget, agent_key=current, agent_doc=agent_doc,
                 message=masked, customer=customer, conversation_id=conversation_id, turn_context=turn_context,
                 task=state.get("next_task_in"), board_summary=board_summary, detected=state["detected"],
@@ -635,11 +642,23 @@ async def n_agent_hop(state: TurnState, config) -> dict:
                 raise
             except Exception as exc:  # noqa: BLE001 — degradação graciosa (padrão)
                 await metrics.increment(f"agent.{current}.failures")
+                done_writes = [a for a in (ctx_sink[0].actions if ctx_sink else []) if a.get("effect") == "write"]
+                if done_writes:
+                    # A escrita já foi commitada antes da falha/timeout: o cliente PRECISA saber.
+                    tail.append(" ".join(a.get("summary") or f"Operação {a.get('tool')} concluída." for a in done_writes))
+                    timeline.extend(ctx_sink[0].events)
                 tail.append(resilience.degraded_reply(current))
                 timeline.append(TimelineEvent(category="agent", title="Agente degradado (falha contida pelo supervisor)",
                                                agent=current, result={"error_type": type(exc).__name__,
-                                                                      "timeout_seconds": supervisor["timeout"]}))
-                return {**out, "tail_notes": tail, "timeline": timeline, "loop_visits": loop_visits}
+                                                                      "timeout_seconds": supervisor["timeout"],
+                                                                      "writes_before_failure": [a.get("tool") for a in done_writes]}))
+                board = state["board"]
+                if done_writes:
+                    entry = blackboard.entry_for(hop, current, state.get("next_task_in"), "degraded", done_writes, "")
+                    board = [*board, entry]
+                    await blackboard.append_entry(svc.store, turn_id=state["turn_id"],
+                                                  customer_key=customer["customer_key"], entry=entry)
+                return {**out, "tail_notes": tail, "timeline": timeline, "loop_visits": loop_visits, "board": board}
     timeline.append(result.event)
     timeline.extend(result.extra_events)
     responses.append(result.response)
@@ -651,7 +670,13 @@ async def n_agent_hop(state: TurnState, config) -> dict:
     touched.update({k: v for k, v in (result.touched or {}).items() if v})
     web_tainted = state["web_tainted"] or result.tainted or any(
         event.op == "external" for event in [result.event, *result.extra_events])
-    budget.reserve(current, estimate_tokens(result.response))
+    try:
+        budget.reserve(current, estimate_tokens(result.response))
+    except BudgetExceeded:
+        # A resposta deste hop já existe (e pode haver escrita feita): esgotar o orçamento aqui encerra a
+        # cadeia, não derruba o turno.
+        tail.append("Encerrei o atendimento nesta etapa para não passar do orçamento do turno.")
+        out["_budget_stop"] = True
     actions = result.actions
     if result.mode == "deterministic":
         # Runner determinístico não registra ações: deriva do que a timeline mostra que ele fez.
@@ -666,7 +691,8 @@ async def n_agent_hop(state: TurnState, config) -> dict:
                                    title=f"Quadro do turno: entrada de {current}", filter={"turn_id": state["turn_id"]},
                                    result={"hop": hop, "mode": result.mode,
                                            "writes": [a.get("tool") for a in result.actions if a.get("effect") == "write"]}))
-    update = {**out, "timeline": timeline, "responses": responses, "tail_notes": tail, "board": board,
+    update = {**{k: v for k, v in out.items() if k != "_budget_stop"}, "timeline": timeline, "responses": responses,
+              "tail_notes": tail, "board": board,
               "web_tainted": web_tainted, "loop_visits": loop_visits, "touched": touched}
     if result.pending_action:
         pending = {**result.pending_action, "hop": hop, "handoff_to": result.handoff_to,
@@ -676,9 +702,10 @@ async def n_agent_hop(state: TurnState, config) -> dict:
             subject_id=str(pending["args"].get("order_id") or pending["args"].get("reward") or customer["customer_key"]),
             customer_key=customer["customer_key"], conversation_id=conversation_id,
             recommended_action="approve", reasoning=pending.get("reason") or "política de aprovação",
+            turn_id=state["turn_id"],
             risk_factors=[pending.get("policy_id") or "hitl"],
             evidence={"tool": pending["tool"], "args": pending["args"], "facts": pending.get("facts"),
-                      "thread_id": checkpoint_thread_id(customer, conversation_id), "turn_id": state["turn_id"],
+                      "thread_id": state["thread_id"], "turn_id": state["turn_id"],
                       "kind": "hitl_interrupt"})
         pending["review_id"] = (review or {}).get("review_id")
         timeline.append(TimelineEvent(category="agent", agent=current, collection="pending_reviews", op="write",
@@ -690,7 +717,8 @@ async def n_agent_hop(state: TurnState, config) -> dict:
         await blackboard.set_status(svc.store, turn_id=state["turn_id"], customer_key=customer["customer_key"],
                                     status="awaiting_approval", extra={"review_id": pending["review_id"]})
         return {**update, "pending_action": pending, "timeline": timeline}
-    if hop == MAX_HOPS - 1:
+    if hop == MAX_HOPS - 1 or out.get("_budget_stop"):
+        update.pop("_budget_stop", None)
         return update
     handoff_to, reason, task = result.handoff_to, result.handoff_reason, result.task_for_next
     if not handoff_to:
@@ -765,18 +793,33 @@ async def n_advance(state: TurnState, config) -> dict:
 async def n_approval(state: TurnState, config) -> dict:
     """Pausa real (LangGraph `interrupt`): o turno para aqui, com o estado no checkpoint do Atlas.
 
-    Nada antes do `interrupt()` tem efeito colateral — na retomada este nó roda de novo do início. A
-    escrita aprovada roda depois dele, uma única vez, pelo MESMO executor da tool (mesmos portões)."""
+    Este nó NÃO tem efeito colateral — na retomada ele roda de novo do início. A escrita aprovada fica
+    no nó seguinte (`apply_approved`), que um checkpoint separa desta pausa."""
     from langgraph.types import interrupt
-    from . import blackboard, tools as tools_module
     pending = state["pending_action"]
     decision = interrupt({"review_id": pending.get("review_id"), "tool": pending["tool"], "args": pending["args"],
                           "agent": pending["agent"], "reason": pending.get("reason")})
+    return {"approval_decision": decision if isinstance(decision, dict) else {"approved": False}}
+
+
+async def n_apply_approved(state: TurnState, config) -> dict:
+    """Executa a escrita aprovada uma única vez, pelo MESMO executor da tool (mesmos portões).
+
+    Idempotência: a revisão ganha `applied_at` depois da escrita; se este nó rodar de novo (falha depois
+    da escrita, `continue_thread`), ele não escreve outra vez."""
+    from . import blackboard, tools as tools_module
+    from .reviews import REVIEWS_COLLECTION
     svc = _svc(config)
+    pending, decision = state["pending_action"], state.get("approval_decision") or {}
     customer, timeline = state["customer"], state["timeline"]
-    approved = isinstance(decision, dict) and decision.get("approved")
+    approved = bool(decision.get("approved"))
     responses = list(state["responses"])
-    if approved:
+    review = await svc.store.find_one(REVIEWS_COLLECTION, {"review_id": pending.get("review_id"),
+                                                           "customer_key": customer["customer_key"]}) or {}
+    actions: list[dict] = []
+    if approved and review.get("applied_at"):
+        text = "Aprovado por um analista. A operação já tinha sido concluída."
+    elif approved:
         ctx = tools_module.ToolContext(
             store=svc.store, customer=customer, message=state["masked"], conversation_id=state["conversation_id"],
             agent_key=pending["agent"], agent_doc=state["registry"].get(pending["agent"]),
@@ -786,19 +829,19 @@ async def n_approval(state: TurnState, config) -> dict:
             hitl_policies=state["hitl_policies"], approved_action={"tool": pending["tool"]})
         result = await tools_module.execute(ctx, pending["tool"], pending["args"])
         timeline.extend(ctx.events)
+        if not result.is_error and pending.get("review_id"):
+            await svc.store.update_one(REVIEWS_COLLECTION, {"review_id": pending["review_id"]},
+                                       {"$set": {"applied_at": utcnow()}})
         summary = (result.content or {}).get("resumo") if isinstance(result.content, dict) else None
-        text = (f"Aprovado por um analista ({decision.get('resolved_by', 'analista')}). "
-                + (summary or "A operação foi concluída."))
+        text = ("Aprovado por um analista. " + (summary or "A operação foi concluída.")) if not result.is_error else (
+            "A aprovação foi registrada, mas a operação não pôde ser concluída agora; o caso segue com o analista.")
         actions = ctx.actions
     else:
-        note = (decision or {}).get("note") if isinstance(decision, dict) else ""
-        text = ("Um analista revisou e não aprovou esta operação" + (f": {note}" if note else ".")
-                + " Nada foi alterado.")
-        actions = []
+        text = "Um analista revisou e não aprovou esta operação. Nada foi alterado."
     timeline.append(TimelineEvent(category="agent", agent=pending["agent"], collection="pending_reviews", op="read",
                                    title="Turno retomado do checkpoint após decisão humana",
                                    filter={"review_id": pending.get("review_id")},
-                                   result={"approved": bool(approved), "tool": pending["tool"]}))
+                                   result={"approved": approved, "tool": pending["tool"]}))
     if responses:
         responses[-1] = text
     entry = blackboard.entry_for(pending["hop"], pending["agent"], "decisão humana", "human_in_the_loop", actions, text)
@@ -908,6 +951,7 @@ def _build_graph(settings):
     builder.add_node("agent_hop", n_agent_hop)
     builder.add_node("advance", n_advance)
     builder.add_node("approval", n_approval)
+    builder.add_node("apply_approved", n_apply_approved)
     builder.add_node("consolidate", n_consolidate)
     builder.add_node("finalize", n_finalize)
 
@@ -922,7 +966,8 @@ def _build_graph(settings):
     builder.add_conditional_edges("agent_hop", _route_after_hop,
                                   {"approval": "approval", "advance": "advance", "consolidate": "consolidate"})
     builder.add_edge("advance", "agent_hop")
-    builder.add_conditional_edges("approval", _route_after_approval, {"advance": "advance", "consolidate": "consolidate"})
+    builder.add_edge("approval", "apply_approved")
+    builder.add_conditional_edges("apply_approved", _route_after_approval, {"advance": "advance", "consolidate": "consolidate"})
     builder.add_edge("consolidate", "finalize")
     for terminal in ("blocked", "fanout", "out_of_scope", "cache_hit", "finalize"):
         builder.add_edge(terminal, END)
@@ -968,26 +1013,30 @@ def get_graph(settings):
     return _GRAPH
 
 
-def checkpoint_thread_id(customer: dict, conversation_id: str) -> str:
-    return f"{customer['customer_key']}:{conversation_id}"
+def checkpoint_thread_id(customer: dict, conversation_id: str, turn_key: str | None = None) -> str:
+    """`<customer_key>:<conversation_id>:<turno>` — uma thread por TURNO.
+
+    Prefixo do cliente: id de conversa alheio cai numa thread do próprio cliente. Sufixo do turno
+    (achado na revisão de 2026-11-12): com uma thread por conversa, um turno novo recomeçava do START
+    sobre o estado do anterior (`resumed`, `pending_action`) e descartava um interrupt pendente; aprovar
+    a revisão R1 retomava a pausa R2. Agora cada pausa tem a sua thread, gravada na revisão."""
+    base = f"{customer['customer_key']}:{conversation_id}"
+    return f"{base}:{turn_key}" if turn_key else base
 
 
 async def run_turn(service, message: str, customer: dict, conversation_id: str | None,
-                   *, crash_before_hop: int | None = None) -> ChatResponse:
+                   *, crash_before_hop: int | None = None, turn_key: str | None = None) -> ChatResponse:
     requested_conversation_id = conversation_id
     resolved_conversation_id = requested_conversation_id or f"conv-{uuid.uuid4().hex[:12]}"
     graph = get_graph(service.store.settings)
+    thread_id = checkpoint_thread_id(customer, resolved_conversation_id, turn_key or uuid.uuid4().hex[:12])
     initial: TurnState = {
         "message": message, "customer": _no_id(customer),
         "conversation_id": resolved_conversation_id,
         "requested_conversation_id": requested_conversation_id,
+        "thread_id": thread_id,
     }
-    # thread_id NAMESPACED pelo cliente: com `thread_id=conversation_id` puro, quem enviasse o
-    # conversation_id de OUTRO cliente carregava o checkpoint dele no próprio turno e gravava um
-    # checkpoint novo na thread alheia (o n_ingest troca o id da conversa, mas o checkpointer já
-    # tinha resolvido a thread). Com o prefixo, id alheio cai numa thread vazia do próprio cliente.
-    config = {"configurable": {"thread_id": checkpoint_thread_id(customer, resolved_conversation_id),
-                               "service": service, "crash_before_hop": crash_before_hop}}
+    config = {"configurable": {"thread_id": thread_id, "service": service, "crash_before_hop": crash_before_hop}}
     final_state = await graph.ainvoke(initial, config=config)
     if final_state.get("__interrupt__"):
         return await _paused_output(service, final_state)
@@ -1016,13 +1065,16 @@ async def _paused_output(service, state: dict) -> ChatResponse:
                                                 "reason": pending.get("reason")})
 
 
-async def resume_turn(service, customer: dict, conversation_id: str, decision: dict) -> ChatResponse | None:
-    """Retoma o turno pausado no checkpoint (mesmo thread) com a decisão humana."""
+async def resume_turn(service, thread_id: str, decision: dict, *, review_id: str | None = None) -> ChatResponse | None:
+    """Retoma o turno pausado na thread GRAVADA na revisão. Recusa (None) se a pausa pendente não é
+    desta revisão — aprovar R1 nunca executa a escrita de outra pausa."""
     from langgraph.types import Command
     graph = get_graph(service.store.settings)
-    config = {"configurable": {"thread_id": checkpoint_thread_id(customer, conversation_id), "service": service}}
+    config = {"configurable": {"thread_id": thread_id, "service": service}}
     snapshot = await graph.aget_state(config)
     if not snapshot.interrupts:
+        return None
+    if review_id and (snapshot.interrupts[0].value or {}).get("review_id") != review_id:
         return None
     final_state = await graph.ainvoke(Command(resume=decision), config=config)
     if final_state.get("__interrupt__"):
@@ -1030,11 +1082,19 @@ async def resume_turn(service, customer: dict, conversation_id: str, decision: d
     return final_state.get("output")
 
 
-async def resume_after_crash(service, customer: dict, conversation_id: str) -> ChatResponse | None:
-    """Retoma do último super-step gravado (`ainvoke(None)`): hops já concluídos NÃO rodam de novo."""
+async def continue_thread(service, thread_id: str) -> ChatResponse | None:
+    """Continua do último super-step gravado (`ainvoke(None)`): queda no meio do turno, ou uma escrita
+    aprovada que falhou. Nós já concluídos NÃO rodam de novo."""
     graph = get_graph(service.store.settings)
-    config = {"configurable": {"thread_id": checkpoint_thread_id(customer, conversation_id), "service": service}}
+    config = {"configurable": {"thread_id": thread_id, "service": service}}
+    snapshot = await graph.aget_state(config)
+    if snapshot.interrupts or not snapshot.next:
+        return None
     final_state = await graph.ainvoke(None, config=config)
     if final_state.get("__interrupt__"):
         return await _paused_output(service, final_state)
     return final_state.get("output")
+
+
+async def resume_after_crash(service, thread_id: str) -> ChatResponse | None:
+    return await continue_thread(service, thread_id)

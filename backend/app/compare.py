@@ -114,5 +114,10 @@ async def compare(store, llm, customer: dict, message: str) -> dict:
                                                 judge_module.evidence_from_timeline(arm["events"]))
         return arm
     single, multi = await asyncio.gather(_judge(single), _judge(multi))
+    from .guardrails import check_output
+    for arm in (single, multi):
+        # Mesmo guardrail de saída do chat: nada sai do A/B sem passar por ele.
+        if arm.get("available") is not False and (await check_output(store, arm["response"], customer)).blocked:
+            arm["response"] = "A resposta foi retida pela política de segurança."
     return {"message": masked, "single": single, "multi": multi,
             "note": "Escritas simuladas nos dois braços; mesmas tools, mesmos portões e mesmo modelo."}

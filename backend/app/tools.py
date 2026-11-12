@@ -81,9 +81,38 @@ def _order_id(args: dict, ctx: ToolContext) -> tuple[str | None, bool]:
     return ctx.turn_context.get("active_order_id"), False
 
 
+_QUESTION_START = re.compile(r"^(como|quanto|quantos|qual|quais|quando|onde|por que|porque|o que|sera que|"
+                             r"posso|da para|da pra|e possivel|existe|tem como)\b")
+
+
+def _clauses(message: str) -> list[tuple[str, bool]]:
+    """(cláusula normalizada, é pergunta?) — a pergunta "como faço para trocar?" não é pedido de troca."""
+    parts = re.split(r"(?<=[.!?;])\s+|\n+", message.strip())
+    out = []
+    for part in parts:
+        norm = normalize(part).strip(" ,")
+        if norm:
+            out.append((norm, part.strip().endswith("?") or bool(_QUESTION_START.match(norm))))
+    return out
+
+
 def _wants(message: str, terms) -> bool:
-    normalized = normalize(message)
-    return any(term in normalized for term in terms)
+    """Pedido de AÇÃO: algum termo numa cláusula que não é pergunta."""
+    return any(not question and any(term in clause for term in terms) for clause, question in _clauses(message))
+
+
+def _wants_status(message: str, status: str) -> bool:
+    from .agents import _requested_status
+    for clause, question in _clauses(message):
+        if question or "pontos" in clause:   # "trocar meus pontos" é fidelidade, não troca de pedido
+            continue
+        if _requested_status(clause) == status:
+            return True
+    return False
+
+
+def _cited_orders(message: str) -> set[str]:
+    return set(re.findall(r"\bPED-\d{4,}\b", message.upper()))
 
 
 # ----------------------------------------------------------------------------------------- reads
@@ -127,7 +156,9 @@ async def _check_warranty(ctx: ToolContext, args: dict) -> ToolResult:
     if explicit and order_id is None:
         return ToolResult({"erro": "order_id inválido; formato PED-0000"}, True)
     # Mensagem real do cliente: o portão da revisão de qualidade (`wants_replacement`) olha o que ELE pediu.
-    result = await run_warranty_agent(ctx.store, ctx.message, ctx.customer, None, None, ctx.agent_doc, "",
+    # No A/B (escritas simuladas) a consulta não pode abrir revisão de qualidade: só a cobertura.
+    message = f"garantia {order_id or ''}".strip() if ctx.simulate_writes else ctx.message
+    result = await run_warranty_agent(ctx.store, message, ctx.customer, None, None, ctx.agent_doc, "",
                                       {**ctx.turn_context, "active_order_id": order_id or ctx.turn_context.get("active_order_id")})
     result.event.title = "Tool check_warranty — cobertura calculada + $graphLookup de reposições"
     ctx.events.append(result.event)
@@ -202,6 +233,8 @@ async def _carrier_news(ctx: ToolContext, args: dict) -> ToolResult:
     if not clean:
         return ToolResult({"encontrado": False})
     web_cfg = ctx.turn_context.get("web_cfg")
+    if ctx.simulate_writes:
+        return ToolResult({"executada": False, "motivo": "modo comparação não gasta a cota de busca web"})
     if not clean.get("delivery_overdue"):
         return ToolResult({"executada": False, "motivo": "busca web só roda com entrega vencida (ADR-005)"})
     if not web_cfg:
@@ -254,17 +287,20 @@ def _simulated(ctx: ToolContext, tool: str, args: dict, collection: str) -> Tool
 
 
 async def _request_status_change(ctx: ToolContext, args: dict) -> ToolResult:
-    from .agents import _requested_status, change_order_status, load_order
+    from .agents import change_order_status, load_order
     status = args.get("status")
     if status not in STATUS_VALUES:
         return ToolResult({"erro": f"status deve ser um de {STATUS_VALUES}"}, True)
-    gate = _write_gate(ctx, "request_order_status_change", _requested_status(ctx.message) == status,
-                       "troca ou reembolso")
+    gate = _write_gate(ctx, "request_order_status_change", _wants_status(ctx.message, status), "troca ou reembolso")
     if gate:
         return gate
     order_id, explicit = _order_id(args, ctx)
     if explicit and order_id is None:
         return ToolResult({"erro": "order_id inválido; formato PED-0000"}, True)
+    cited = _cited_orders(ctx.message)
+    if cited and (order_id or "") not in cited:
+        # O alvo da escrita é o pedido que o CLIENTE citou, nunca outro escolhido pelo modelo.
+        return ToolResult({"executada": False, "motivo": f"o cliente citou {sorted(cited)}; escrita só nesse(s) pedido(s)"}, True)
     clean, _ = await load_order(ctx.store, ctx.customer, order_id, explicit)
     if not clean:
         return ToolResult({"executada": False, "motivo": "pedido não encontrado para o cliente autenticado"}, True)
@@ -291,7 +327,7 @@ async def _redeem_reward(ctx: ToolContext, args: dict) -> ToolResult:
     reward = args.get("reward")
     if reward not in REWARD_CATALOG:
         return ToolResult({"erro": f"reward deve ser um de {sorted(REWARD_CATALOG)}"}, True)
-    gate = _write_gate(ctx, "redeem_reward", reward in normalize(ctx.message), f"resgate de '{reward}'")
+    gate = _write_gate(ctx, "redeem_reward", _wants(ctx.message, (reward,)), f"resgate de '{reward}'")
     if gate:
         return gate
     query = {"customer_key": ctx.customer["customer_key"]}
@@ -434,6 +470,9 @@ async def execute(ctx: ToolContext, name: str, args: dict, call_id: str = "") ->
     spec = TOOLS.get(name)
     if spec is None:
         return ToolResult({"erro": f"tool desconhecida: {name}"}, True)
+    # Só as chaves do JSON Schema da tool passam (o modelo não injeta campo extra no executor nem no quadro).
+    allowed_keys = set((spec.input_schema.get("properties") or {}).keys())
+    args = {key: value for key, value in (args or {}).items() if key in allowed_keys}
     with observability.span(f"execute_tool {name}", **{
             "gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": name, "gen_ai.tool.type": "function",
             "gen_ai.tool.call.id": call_id, "gen_ai.agent.name": ctx.agent_key}):
@@ -454,9 +493,9 @@ def explicit_write_intents(message: str, tool_names: list[str]) -> list[str]:
     from .agents import REWARD_CATALOG, _requested_status
     found = []
     status = _requested_status(message)
-    if status and "request_order_status_change" in tool_names:
+    if status and "request_order_status_change" in tool_names and _wants_status(message, status):
         found.append(f"request_order_status_change com status '{status}'")
-    reward = next((key for key in REWARD_CATALOG if key in normalize(message)), None)
+    reward = next((key for key in REWARD_CATALOG if _wants(message, (key,))), None)
     if reward and "redeem_reward" in tool_names:
         found.append(f"redeem_reward '{reward}'")
     if _wants(message, RESCHEDULE_TERMS) and "request_delivery_reschedule" in tool_names:

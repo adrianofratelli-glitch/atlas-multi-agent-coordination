@@ -52,12 +52,21 @@ async def set_status(store, *, turn_id: str, customer_key: str, status: str, ext
         pass
 
 
+FREE_TEXT_ARGS = ("summary", "query", "task", "reason")
+
+
+def _safe_args(args) -> dict:
+    """Só ids/enums validados pelo executor; texto livre do modelo não vai ao quadro (nem ao próximo prompt)."""
+    return {k: v for k, v in (args or {}).items() if k not in FREE_TEXT_ARGS} if isinstance(args, dict) else {}
+
+
 def entry_for(hop: int, agent: str, task: str | None, mode: str, actions: list[dict], answer: str,
               handoff_to: str | None = None) -> dict:
     return {"hop": hop, "agent": agent, "task": task or "", "mode": mode,
-            "actions": [{k: v for k, v in item.items() if k in
-                         ("tool", "effect", "args", "changed", "summary", "simulated", "ticket_id",
-                          "blocked_by_recurrence", "already_open")} for item in actions],
+            "actions": [{**{k: v for k, v in item.items() if k in
+                            ("tool", "effect", "changed", "summary", "simulated", "ticket_id",
+                             "blocked_by_recurrence", "already_open")}, "args": _safe_args(item.get("args"))}
+                        for item in actions],
             "answer": answer, "handoff_to": handoff_to, "at": utcnow()}
 
 

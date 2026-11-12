@@ -85,7 +85,7 @@ async def run_tool_agent(*, store, llm, budget, agent_key: str, agent_doc: dict,
                          conversation_id: str, turn_context: dict, task: str | None, board_summary: str,
                          detected: dict[str, list[str]], handoff_targets: list[str], hitl_policies: list[dict],
                          extra_hint: str = "", simulate_writes: bool = False, tainted: bool = False,
-                         approved_action: dict | None = None) -> AgentResult | None:
+                         approved_action: dict | None = None, ctx_sink: list | None = None) -> AgentResult | None:
     if not (tool_calling_enabled() and llm is not None and getattr(llm, "anthropic_client", None) and agent_doc):
         return None
     specs = tools_module.tools_for(agent_doc, agent_key)
@@ -99,6 +99,8 @@ async def run_tool_agent(*, store, llm, budget, agent_key: str, agent_doc: dict,
                                    agent_key=agent_key, agent_doc=agent_doc, turn_context=turn_context,
                                    hitl_policies=hitl_policies, simulate_writes=simulate_writes, tainted=tainted,
                                    approved_action=approved_action)
+    if ctx_sink is not None:
+        ctx_sink.append(ctx)
     others = {key: words for key, words in detected.items() if key != agent_key}
     intents = tools_module.explicit_write_intents(message, [spec.name for spec in specs])
     dynamic = "\n\n".join(part for part in (
@@ -107,8 +109,8 @@ async def run_tool_agent(*, store, llm, budget, agent_key: str, agent_doc: dict,
          else "Você é o primeiro agente do turno." if not board_summary else ""),
         ("Especialidades que as regras de roteamento detectaram na mensagem: "
          + "; ".join(f"{key} ({', '.join(words[:3])})" for key, words in others.items())) if others else "",
-        ("Pedidos explícitos do cliente que o servidor detectou para as SUAS tools de escrita (execute-os se o "
-         "dado confirmar): " + "; ".join(intents)) if intents else "",
+        ("Pedidos de ação que o servidor detectou na mensagem para as SUAS tools de escrita (pode executar se o "
+         "cliente pediu a ação e o dado confirmar; pergunta não é pedido): " + "; ".join(intents)) if intents else "",
         board_summary, extra_hint.strip(),
     ) if part)
     messages: list[dict] = [{"role": "user", "content": message}]

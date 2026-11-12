@@ -22,9 +22,10 @@ DEFAULT_POLICIES = [
     {
         "policy_id": "HITL-RESGATE-ALTO",
         "tool": "redeem_reward",
-        "when": {"points_gte": 1000},
-        "reason": "Resgate de 1.000 pontos ou mais passa por aprovação.",
-        "active": True,
+        "when": {"points_gte": 500},
+        "reason": "Resgate de 500 pontos ou mais passa por aprovação.",
+        # Desligada no seed: ligar AO VIVO (Agentes → políticas) mostra que a política é dado.
+        "active": False,
     },
 ]
 
@@ -46,8 +47,11 @@ def _matches(key: str, expected: Any, facts: dict[str, Any]) -> bool:
 
 
 async def load_policies(store) -> list[dict]:
+    """Políticas ATIVAS. O padrão só vale se a collection não existir/estiver vazia ou der erro (falha
+    fechada) — desligar todas pelo admin desliga de verdade."""
     try:
-        rows = await store.find_many("hitl_policies", {"active": True}, brain=True, limit=50)
-    except Exception:  # noqa: BLE001 — sem a collection, vale a política padrão (falha fechada)
+        rows = await store.find_many("hitl_policies", {}, brain=True, limit=50)
+    except Exception:  # noqa: BLE001
         rows = []
-    return [{k: v for k, v in row.items() if k != "_id"} for row in rows] or list(DEFAULT_POLICIES)
+    policies = [{k: v for k, v in row.items() if k != "_id"} for row in rows] or list(DEFAULT_POLICIES)
+    return [policy for policy in policies if policy.get("active", True)]

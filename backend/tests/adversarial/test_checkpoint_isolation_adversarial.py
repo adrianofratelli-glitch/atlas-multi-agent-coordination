@@ -23,25 +23,30 @@ async def _service():
     return OrchestrationService(store, LLMGateway(settings), global_budget=20000), settings
 
 
-def _latest(settings, customer, conversation_id):
+def _threads(settings, prefix: str) -> dict:
+    """Threads (uma por turno) cujo id começa com `prefix`, com o último estado de cada uma."""
     graph = og.get_graph(settings)
-    snapshot = graph.get_state({"configurable": {"thread_id": og.checkpoint_thread_id(customer, conversation_id)}})
-    return snapshot.values
+    out = {}
+    for thread in list(graph.checkpointer.storage):
+        if thread.startswith(prefix):
+            out[thread] = graph.get_state({"configurable": {"thread_id": thread}}).values
+    return out
 
 
 async def test_foreign_conversation_id_never_touches_the_owner_checkpoint():
     service, settings = await _service()
     ana_turn = await service.run_turn("onde está o meu pedido PED-1001?", ANA, None)
     conv = ana_turn.conversation_id
-    before = _latest(settings, ANA, conv)
-    assert before["customer"]["customer_key"] == "ana"
+    before = _threads(settings, f"ana:{conv}")
+    assert before and all(v["customer"]["customer_key"] == "ana" for v in before.values())
 
     bruno_turn = await service.run_turn("onde está o meu pedido PED-2001?", BRUNO, conv)
     assert bruno_turn.conversation_id != conv, "id alheio é trocado por uma conversa nova"
-    after = _latest(settings, ANA, conv)
-    assert after["customer"]["customer_key"] == "ana"
-    assert after["masked"] == before["masked"], "o turno do Bruno não pode gravar na thread da Ana"
-    assert "PED-1001" not in str(_latest(settings, BRUNO, conv).get("masked", ""))
+    after = _threads(settings, f"ana:{conv}")
+    assert set(after) == set(before), "o turno do Bruno não pode criar thread com o prefixo da Ana"
+    assert all(after[t]["masked"] == before[t]["masked"] for t in before)
+    assert all(t.startswith("bruno:") for t in _threads(settings, "bruno:"))
+    assert not any("PED-1001" in str(v.get("masked", "")) for v in _threads(settings, "bruno:").values())
 
 
 def test_checkpointer_has_ttl_aligned_with_conversations():

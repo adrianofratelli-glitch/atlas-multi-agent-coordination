@@ -1,7 +1,8 @@
 """A2A 1.0 AgentCards built from the live `agent_registry` (agents are data, so are their cards).
 
 Pure functions: no I/O, no secrets. The caller reads the registry and passes the documents in.
-Only public role data leaves here: `label`, `persona` (a short public role statement), tool
+Only public role data leaves here: `label`, `public_description` (never the `persona`, which is part
+of the system prompt and editable by an admin), tool
 names/descriptions and the active flag. Model names, token budgets, retrieval config and any other
 registry field are deliberately left out.
 
@@ -14,6 +15,24 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from .tools import ToolSpec, tools_for
+
+PUBLIC_ROLES = {
+    "orchestrator": "Plans the turn, routes to specialists and consolidates one answer.",
+    "order_agent": "Order status, exchange and refund for the authenticated customer.",
+    "product_agent": "Catalog recommendations with semantic search.",
+    "support_agent": "Technical diagnosis from the knowledge base; human ticket on request.",
+    "billing_agent": "Read-only invoice questions.",
+    "warranty_agent": "Warranty coverage and replacement chain.",
+    "loyalty_agent": "Loyalty points, tier and reward redemption.",
+    "logistics_agent": "Carrier, tracking, delivery estimate and reschedule.",
+}
+
+
+def _public_description(agent: dict) -> str:
+    """Texto público do papel: `public_description` do registry ou o papel fixo; nunca a persona."""
+    return (agent.get("public_description") or PUBLIC_ROLES.get(agent.get("agent_key"), "")
+            or agent.get("label") or "").strip()
+
 
 A2A_PROTOCOL_VERSION = "1.0"
 CARD_VERSION = "1.3.0"
@@ -78,7 +97,7 @@ def _tool_tags(specs: Iterable[ToolSpec]) -> list[str]:
 def _specialist_skill(agent: dict) -> dict:
     key = agent["agent_key"]
     specs = tools_for(agent, key)
-    persona = (agent.get("persona") or "").strip()
+    persona = _public_description(agent)
     tool_lines = "; ".join(f"{spec.name} ({spec.effect}): {spec.description}" for spec in specs)
     description = persona + (f" Tools: {tool_lines}" if tool_lines else "")
     skill = {
@@ -102,7 +121,7 @@ def system_card(agents: list[dict], base_url: str) -> dict:
         "Multi-agent customer service where MongoDB Atlas is both the data plane and the coordination plane "
         "(routing rules, agent registry, handoffs, memory and guardrails are documents). One entry point: the "
         "orchestrator routes each turn to the specialists below and consolidates one answer. "
-        + ((orchestrator.get("persona") or "").strip())
+        + _public_description(orchestrator)
     ).strip()
     return {
         "name": "Atlas Multi-Agent Coordination",
@@ -132,7 +151,7 @@ def agent_card(agent: dict, base_url: str) -> dict:
         role = _specialist_skill(agent)
         role["tags"] = [key, "coordination"] if key == ORCHESTRATOR else role["tags"]
         skills = [role]
-    persona = (agent.get("persona") or "").strip()
+    persona = _public_description(agent)
     return {
         "name": f"{agent.get('label') or key} ({key})",
         "description": (persona + " Reached through the orchestrator at /api/chat.").strip(),
