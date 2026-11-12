@@ -53,12 +53,10 @@ async def live():
     unique_messages: list[str] = []
     yield store, llm, customer, unique_messages
     db = store.client[settings.mongodb_db]
-    # checkpoints do LangGraph: thread_id = "<customer_key>:<conversation_id>" (sem $regex)
-    threads = [f"{key}:{c['conversation_id']}" for c in
-               await db["agent_conversations"].find({"customer_key": key}, {"conversation_id": 1}).to_list(None)]
-    if threads:
-        await db["langgraph_checkpoints"].delete_many({"thread_id": {"$in": threads}})
-        await db["langgraph_checkpoint_writes"].delete_many({"thread_id": {"$in": threads}})
+    # checkpoints: thread_id = "<customer_key>:<conversa>:<turno>" — faixa de prefixo, sem $regex
+    prefix = {"thread_id": {"$gte": f"{key}:", "$lt": f"{key};"}}
+    await db["langgraph_checkpoints"].delete_many(prefix)
+    await db["langgraph_checkpoint_writes"].delete_many(prefix)
     for name in await db.list_collection_names():
         await db[name].delete_many({"customer_key": key})
     await db["semantic_cache"].delete_many({"question_text": {"$in": unique_messages}})

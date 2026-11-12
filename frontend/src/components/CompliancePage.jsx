@@ -58,7 +58,7 @@ function ReviewQueue({ adminMode, onResolved, onResumed, labels = {}, refreshKey
         note: `Resolvido pelo painel: ${DECISION_LABELS[decision]}.`,
       });
       if (isInterrupt(review)) {
-        setResumed({ review, decision, turn: resolved?.resumed_turn || null });
+        setResumed({ review, decision, turn: resolved?.resumed_turn || null, note: resolved?.resume_note || '' });
         if (resolved?.resumed_turn) onResumed?.(resolved.resumed_turn);
       }
       await load();
@@ -75,7 +75,7 @@ function ReviewQueue({ adminMode, onResolved, onResumed, labels = {}, refreshKey
   }
   const resumedCard = resumed && (
     <article className="resumed-card" aria-live="polite">
-      <h4>{resumed.decision === 'approve' ? 'Escrita aprovada' : 'Escrita recusada'}: turno retomado do checkpoint</h4>
+      <h4>{resumed.decision === 'approve' ? 'Escrita aprovada' : 'Escrita recusada'}: {resumed.turn ? 'turno retomado do checkpoint' : (resumed.note || 'decisão gravada')}</h4>
       <p className="resumed-meta"><code>{resumed.review.review_id}</code> · {labels[resumed.review.agent] || resumed.review.agent} · conversa <code>{resumed.review.conversation_id}</code></p>
       {resumed.turn
         ? <div className="resumed-answer"><RichText text={resumed.turn.response} /></div>

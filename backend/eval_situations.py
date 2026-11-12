@@ -104,11 +104,10 @@ async def run(categories: list[str] | None, concurrency: int) -> list[dict]:
         await asyncio.gather(*[one(c) for c in cases])
     finally:
         db = store.client[settings.mongodb_db]
-        threads = [f"{key}:{c['conversation_id']}" for c in
-                   await db["agent_conversations"].find({"customer_key": key}, {"conversation_id": 1}).to_list(None)]
-        if threads:
-            await db["langgraph_checkpoints"].delete_many({"thread_id": {"$in": threads}})
-            await db["langgraph_checkpoint_writes"].delete_many({"thread_id": {"$in": threads}})
+        # checkpoints: thread_id = "<customer_key>:<conversa>:<turno>" — faixa de prefixo, sem $regex
+        prefix = {"thread_id": {"$gte": f"{key}:", "$lt": f"{key};"}}
+        await db["langgraph_checkpoints"].delete_many(prefix)
+        await db["langgraph_checkpoint_writes"].delete_many(prefix)
         for name in await db.list_collection_names():
             await db[name].delete_many({"customer_key": key})
         await db["guardrail_denylist"].delete_many({"source": "semantic_llm", "learned_at": {"$gte": started}})

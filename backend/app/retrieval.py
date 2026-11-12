@@ -228,8 +228,11 @@ async def search_kb_explained(store, message: str, *, agent_doc: dict | None = N
     out.config["method"] = method
 
     async def fused(*, rerank: dict | None, basic: bool) -> list[dict]:
+        # Com $rerank a fusão é sempre $rankFusion: uma falha do $scoreFusion não pode derrubar a capability
+        # do rerank (o rerank foi medido sobre o RRF, ADR-007).
         return await store.aggregate("kb_articles", build_kb_rank_fusion_pipeline(
-            message, limit=KB_LIMIT, config=cfg, rerank=rerank, category=category, basic=basic, method=method))
+            message, limit=KB_LIMIT, config=cfg, rerank=rerank, category=category, basic=basic,
+            method="rank" if rerank else method))
 
     if not store.memory and strategy != "rrf_aplicacao":
         if want_rerank and _capabilities.usable("rerank"):

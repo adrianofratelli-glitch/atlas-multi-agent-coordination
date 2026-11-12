@@ -555,7 +555,7 @@ async def n_agent_hop(state: TurnState, config) -> dict:
     quadro e a validação do próximo destino. Cada hop é um super-step com checkpoint no Atlas."""
     svc = _svc(config)
     from . import agent_loop, blackboard, reviews
-    from .agents import RUNNERS
+    from .agents import RUNNERS, AgentResult
     from .orchestration import (ALLOWED_REVISITS, FALLBACK_AGENTS, MAX_HOPS, MAX_VISITS_PER_AGENT,
                                  WRITE_EFFECT_AGENTS, _supervisor_state)
     customer, registry, budget = state["customer"], state["registry"], state["budget"]
@@ -570,9 +570,7 @@ async def n_agent_hop(state: TurnState, config) -> dict:
     runner = RUNNERS.get(current)
     if not runner:
         return out
-    if state.get("pending_action") and current in WRITE_EFFECT_AGENTS and not agent_loop.tool_calling_enabled():
-        tail.append("Outras alterações deste pedido ficam para depois da decisão do analista.")
-        return {**out, "tail_notes": tail}
+    held = bool(state.get("pending_action")) and current in WRITE_EFFECT_AGENTS
     if state["web_tainted"] and current in WRITE_EFFECT_AGENTS:
         await metrics.increment("web.taint_blocked")
         tail.append("Para eu seguir com a próxima etapa, confirme o pedido numa nova mensagem — neste atendimento "
@@ -627,6 +625,12 @@ async def n_agent_hop(state: TurnState, config) -> dict:
                 handoff_targets=targets, hitl_policies=state["hitl_policies"],
                 hold_writes=bool(state.get("pending_action")),
                 extra_hint=state["first_hint"] if hop == 0 else "", tainted=state["web_tainted"])
+            if result is None and held:
+                # Escrita deste turno aguarda aprovação: o runner determinístico (que escreve direto, sem os
+                # portões das tools) não roda para um agente que escreve.
+                held_event = TimelineEvent(category="agent", agent=current, title="Etapa adiada: escrita aguardando aprovação humana",
+                                           result={"held": True})
+                return AgentResult("Esta etapa depende da decisão do analista; peça de novo depois dela.", held_event)
             if result is None:
                 # Provedor falhou no tool calling (erro/breaker): o template determinístico responde sem pagar
                 # o retry de novo na síntese. Sem tentativa (sem modelo, flag desligada): runner normal.
@@ -814,10 +818,25 @@ async def n_approval(state: TurnState, config) -> dict:
     Este nó NÃO tem efeito colateral — na retomada ele roda de novo do início. A escrita aprovada fica
     no nó seguinte (`apply_approved`), que um checkpoint separa desta pausa."""
     from langgraph.types import interrupt
+    from .reviews import REVIEWS_COLLECTION
     pending = state["pending_action"]
+    # O analista pode decidir ANTES de a cadeia chegar aqui (a revisão abre no hop; os passos de leitura do
+    # plano ainda rodam). Leitura sem efeito colateral: decisão já gravada → segue sem pausar.
+    review = await _svc(config).store.find_one(REVIEWS_COLLECTION, {
+        "review_id": pending.get("review_id"), "customer_key": state["customer"]["customer_key"]}) or {}
+    if review.get("status") == "resolved":
+        return {"approval_decision": decision_from_review(review)}
     decision = interrupt({"review_id": pending.get("review_id"), "tool": pending["tool"], "args": pending["args"],
                           "agent": pending["agent"], "reason": pending.get("reason")})
     return {"approval_decision": decision if isinstance(decision, dict) else {"approved": False}}
+
+
+APPROVING_DECISIONS = ("approve", "approve_replacement", "refund")
+
+
+def decision_from_review(review: dict) -> dict:
+    return {"approved": review.get("human_decision") in APPROVING_DECISIONS,
+            "resolved_by": review.get("resolved_by"), "note": review.get("note", "")}
 
 
 async def n_apply_approved(state: TurnState, config) -> dict:
@@ -846,6 +865,9 @@ async def n_apply_approved(state: TurnState, config) -> dict:
                           "web_cfg": state.get("web_cfg")},
             hitl_policies=state["hitl_policies"], approved_action={"tool": pending["tool"]})
         result = await tools_module.execute(ctx, pending["tool"], pending["args"])
+        if result.is_error and str((result.content or {}).get("erro", "")).startswith("falha ao executar"):
+            # Falha transitória da escrita: o nó falha e fica retomável (`/continue`); `applied_at` não foi gravado.
+            raise RuntimeError(f"escrita aprovada falhou: {pending['tool']}")
         timeline.extend(ctx.events)
         if not result.is_error and pending.get("review_id"):
             await svc.store.update_one(REVIEWS_COLLECTION, {"review_id": pending["review_id"]},

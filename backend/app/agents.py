@@ -102,8 +102,8 @@ def _is_trivial_lookup(message: str, *tokens: str | None, max_words: int = 0) ->
 
 
 _STATUS_INTENTS = (
-    (("troca", "trocar"), "troca_solicitada"),
-    (("reembolso", "reembolsar", "estornar", "estorno"), "reembolsado"),
+    (("troca", "trocar", "troque", "troquem"), "troca_solicitada"),
+    (("reembolso", "reembolsar", "reembolse", "estornar", "estorno", "estorne"), "reembolsado"),
 )
 
 
@@ -523,7 +523,9 @@ async def run_loyalty_agent(store: DataStore, message: str, customer: dict, llm=
         return AgentResult(response, event)
 
     normalized = normalize(message)
-    reward_key = next((key for key in REWARD_CATALOG if key in normalized), None)
+    from .tools import _wants
+    # Mesmo portão das tools: "quanto custa o voucher?" é pergunta, não pedido de resgate.
+    reward_key = next((key for key in REWARD_CATALOG if _wants(message, (key,))), None)
     wants_redemption = any(term in normalized for term in ("resgatar", "resgate", "trocar meus pontos", "usar pontos", "usar meus pontos"))
     if reward_key is None and wants_redemption and not any(term in normalized for term in ("produto", "catalogo", "presente")):
         # Pediu resgate de algo que NÃO existe na tabela de recompensas. Em vez de deixar o
@@ -543,6 +545,19 @@ async def run_loyalty_agent(store: DataStore, message: str, customer: dict, llm=
         event = TimelineEvent(category="agent", title="Resgate fora da tabela de recompensas (catálogo real apresentado)", agent="loyalty_agent", collection="loyalty_accounts", op="read", filter=query, result=clean, duration_ms=(perf_counter() - started) * 1000)
         return AgentResult(response, event)
     if reward_key:
+        from .hitl import load_policies, matching_policy
+        label, cost = REWARD_CATALOG[reward_key]
+        policy = matching_policy(await load_policies(store), "redeem_reward",
+                                 {"reward": reward_key, "points": cost, "balance": clean["points"]})
+        if policy:
+            event = TimelineEvent(category="agent", title="Resgate sujeito a aprovação humana (política hitl_policies)",
+                                  agent="loyalty_agent", collection="loyalty_accounts", op="read", filter=query,
+                                  result=clean, duration_ms=(perf_counter() - started) * 1000)
+            result = AgentResult(f"O resgate de {label} precisa da aprovação de um analista; por enquanto nada foi debitado.", event)
+            result.pending_action = {"tool": "redeem_reward", "agent": "loyalty_agent", "args": {"reward": reward_key},
+                                     "facts": {"points": cost}, "policy_id": policy.get("policy_id"),
+                                     "reason": policy.get("reason", "")}
+            return result
         response, event = await redeem_reward(store, customer, clean, query, reward_key,
                                               (context or {}).get("conversation_id", ""), started)
         return AgentResult(response, event)
@@ -630,7 +645,8 @@ async def run_logistics_agent(store: DataStore, message: str, customer: dict, ll
         )
     )
     order_already_ran = "order_agent" in (context or {}).get("handoff_path", [])
-    wants_reschedule = any(term in normalized for term in ("reagendar", "mudar a entrega", "outro dia", "adiar a entrega"))
+    from .tools import RESCHEDULE_TERMS, _wants
+    wants_reschedule = _wants(message, RESCHEDULE_TERMS)
     if wants_reschedule and clean["current_location"] != "Entregue":
         # escrita restrita: só um campo de sinalização, nunca a transportadora/prazo real — quem confirma
         # a nova data é a transportadora, o sistema só registra o pedido de reagendamento.

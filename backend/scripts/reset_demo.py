@@ -48,7 +48,12 @@ async def _orphan_checkpoints(store: DataStore) -> int:
     db = store.client[store.settings.mongodb_db]
     live = {f"{c['customer_key']}:{c['conversation_id']}"
             for c in await db.agent_conversations.find({}, {"customer_key": 1, "conversation_id": 1}).to_list(None)}
-    threads = [t for t in await db.langgraph_checkpoints.distinct("thread_id") if t not in live]
+    # thread por turno ("<cliente>:<conversa>:<turno>"): órfã é a de conversa que não existe mais E que não
+    # guarda uma pausa HITL ainda pendente (aprovar depois do reset tem de retomar).
+    paused = {(r.get("evidence") or {}).get("thread_id") for r in await db.pending_reviews.find(
+        {"status": "pending", "evidence.kind": "hitl_interrupt"}, {"evidence.thread_id": 1}).to_list(None)}
+    threads = [t for t in await db.langgraph_checkpoints.distinct("thread_id")
+               if ":".join(t.split(":")[:2]) not in live and t not in paused]
     removed = 0
     for start in range(0, len(threads), 500):
         chunk = threads[start:start + 500]

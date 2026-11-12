@@ -332,7 +332,10 @@ async def my_reviews(
     store: DataStore = Depends(get_store),
 ):
     """Casos do próprio cliente que estão (ou estiveram) aguardando decisão humana."""
-    return await list_reviews(store, customer_key=customer["customer_key"], status=status_filter)
+    # O cliente vê o caso e a decisão; quem decidiu, a nota interna e a evidência ficam com o analista.
+    private = ("resolved_by", "note", "evidence")
+    return [{k: v for k, v in review.items() if k not in private}
+            for review in await list_reviews(store, customer_key=customer["customer_key"], status=status_filter)]
 
 
 @app.get("/api/memory/{customer_key}")
@@ -606,6 +609,9 @@ async def resolve_pending_review(request: Request, review_id: str, payload: Revi
             log("hitl_resume_failed", review_id=review_id, error=type(exc).__name__)
             output = None
         resolved["resumed_turn"] = output.model_dump(mode="json") if output else None
+        if output is None:
+            # A cadeia ainda não chegou ao ponto de aprovação: a decisão gravada é lida lá (n_approval).
+            resolved["resume_note"] = "decisão gravada; o turno aplica ao chegar no ponto de aprovação"
         if output:
             # Avisa a tela do cliente DEPOIS de a resposta retomada estar gravada (o handoff do revisor,
             # gravado na transação da decisão, chega antes dela).
@@ -626,6 +632,11 @@ async def continue_review_turn(request: Request, review_id: str, store: DataStor
         raise HTTPException(status.HTTP_404_NOT_FOUND, "revisão resolvida com turno pausado não encontrada")
     try:
         output = await orchestration_graph.continue_thread(request.app.state.orchestrator, thread_id)
+        if output is None:
+            # Pausa ainda pendente (a retomada da decisão falhou antes de aplicar): reenvia a decisão GRAVADA.
+            output = await orchestration_graph.resume_turn(request.app.state.orchestrator, thread_id,
+                                                           orchestration_graph.decision_from_review(review),
+                                                           review_id=review_id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"retomada falhou: {type(exc).__name__}") from exc
     if output is None:
@@ -709,7 +720,7 @@ async def typed_memory(customer: dict = Depends(current_customer), store: DataSt
         "semantic": {"collection": "customer_memory", "items": [strip(d) for d in facts]},
         "episodic": {"collection": "long_term_memory", "items": [strip(d) for d in episodes]},
         "procedural": {"collections": ["agent_registry", "routing_rules", "hitl_policies"],
-                       "agents": [{"agent_key": d["agent_key"], "persona": d.get("persona"),
+                       "agents": [{"agent_key": d["agent_key"], "label": d.get("label"),
                                    "allowed_tools": d.get("allowed_tools")} for d in agents_docs],
                        "routing_rules": len(rules),
                        "hitl_policies": [strip(d) for d in policies]},
@@ -744,7 +755,9 @@ async def compare_architectures(request: Request, payload: CompareRequest,
     from .guardrails import check_input
     llm = request.app.state.orchestrator.llm
     orchestrator_doc = await store.find_one("agent_registry", {"agent_key": "orchestrator"}, brain=True)
-    guard = await check_input(store, payload.message, customer, llm=llm, budget=TurnBudget(20000, {"orchestrator": 20000}),
+    from .security import mask_pii
+    guard = await check_input(store, mask_pii(payload.message), customer, llm=llm,
+                              budget=TurnBudget(20000, {"orchestrator": 20000}),
                               agent_doc={k: v for k, v in (orchestrator_doc or {}).items() if k != "_id"} or None)
     if guard.blocked:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "mensagem bloqueada pela política de segurança")

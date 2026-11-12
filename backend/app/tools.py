@@ -82,18 +82,23 @@ def _order_id(args: dict, ctx: ToolContext) -> tuple[str | None, bool]:
     return ctx.turn_context.get("active_order_id"), False
 
 
-_QUESTION_START = re.compile(r"^(como|quanto|quantos|qual|quais|quando|onde|por que|porque|o que|sera que|"
-                             r"posso|da para|da pra|e possivel|existe|tem como)\b")
+# Pergunta de INFORMAÇÃO ("como faço para trocar?") não é pedido; pedido educado ("pode trocar?",
+# "dá pra reagendar?") é. Vírgula separa cláusulas ("quero o reembolso, como fica a fatura?").
+_QUESTION_START = re.compile(r"^(e )?(como|quanto|quantos|quanta|qual|quais|quando|onde|por que|porque|o que|"
+                             r"sera que|existe|existem)\b")
+_NEGATED = re.compile(r"\b(nao|nunca|jamais) (quero |vou |preciso |precisa |pode |deve )?"
+                      r"(troc|reembols|resgat|reagend|cancel|abrir|abra)")
+_POINTS_SWAP = re.compile(r"troc\w*\s+(os\s+|meus\s+|minhas\s+)?pontos")
 
 
 def _clauses(message: str) -> list[tuple[str, bool]]:
     """(cláusula normalizada, é pergunta?) — a pergunta "como faço para trocar?" não é pedido de troca."""
-    parts = re.split(r"(?<=[.!?;])\s+|\n+", message.strip())
+    parts = re.split(r"(?<=[.!?;,])\s+|\n+", message.strip())
     out = []
     for part in parts:
-        norm = normalize(part).strip(" ,")
+        norm = normalize(part).strip(" ,.;!?")
         if norm:
-            out.append((norm, part.strip().endswith("?") or bool(_QUESTION_START.match(norm))))
+            out.append((norm, bool(_QUESTION_START.match(norm)) or bool(_NEGATED.search(norm))))
     return out
 
 
@@ -105,7 +110,7 @@ def _wants(message: str, terms) -> bool:
 def _wants_status(message: str, status: str) -> bool:
     from .agents import _requested_status
     for clause, question in _clauses(message):
-        if question or "pontos" in clause:   # "trocar meus pontos" é fidelidade, não troca de pedido
+        if question or _POINTS_SWAP.search(clause):   # "trocar meus pontos" é fidelidade, não troca de pedido
             continue
         if _requested_status(clause) == status:
             return True
@@ -256,7 +261,7 @@ async def _carrier_news(ctx: ToolContext, args: dict) -> ToolResult:
 def _write_gate(ctx: ToolContext, tool: str, intent_ok: bool, intent_hint: str) -> ToolResult | None:
     if ctx.hold_writes and not ctx.approved_action:
         return ToolResult({"executada": False, "motivo": "há uma operação deste turno aguardando aprovação humana; "
-                           "outras alterações ficam para depois da decisão"}, True)
+                           "peça esta alteração de novo depois da decisão"}, True)
     if ctx.tainted:
         return ToolResult({"executada": False, "motivo": "web_taint: o turno usou fonte externa; "
                            "escritas ficam para a próxima mensagem do cliente (ADR-005)"}, True)
@@ -359,6 +364,9 @@ async def _request_reschedule(ctx: ToolContext, args: dict) -> ToolResult:
     if gate:
         return gate
     order_id, explicit = _order_id(args, ctx)
+    cited = _cited_orders(ctx.message)
+    if cited and (order_id or "") not in cited:
+        return ToolResult({"executada": False, "motivo": f"o cliente citou {sorted(cited)}; escrita só nesse(s) pedido(s)"}, True)
     clean, query = await load_shipment(ctx.store, ctx.customer, order_id, explicit)
     if not clean or clean.get("current_location") == "Entregue":
         return ToolResult({"executada": False, "motivo": "entrega inexistente ou já entregue"}, True)
@@ -487,11 +495,13 @@ async def execute(ctx: ToolContext, name: str, args: dict, call_id: str = "") ->
             from . import metrics as metrics_module
             await metrics_module.metrics.increment(f"tool.{name}.failures")
             return ToolResult({"erro": f"falha ao executar {name}: {type(exc).__name__}"}, True)
-    if spec.effect in ("read", "external") and not result.is_error:
+    if spec.effect == "external" and not result.is_error:
+        ctx.actions.append({"tool": name, "effect": "external"})
+    if spec.effect == "read" and not result.is_error:
         import json as _json
-        # Fatos lidos (dado do servidor, não texto de modelo) vão para a consolidação; o próximo agente
+        # Fatos lidos do BANCO (nunca conteúdo web, ADR-005) vão para a consolidação; o próximo agente
         # vê só o nome da tool (`blackboard.summary_for_prompt`).
-        ctx.actions.append({"tool": name, "effect": spec.effect,
+        ctx.actions.append({"tool": name, "effect": "read",
                             "facts": _json.dumps(result.content, ensure_ascii=False, default=str)[:1500]})
     return result
 
