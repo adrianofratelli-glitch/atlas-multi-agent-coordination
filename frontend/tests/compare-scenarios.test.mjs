@@ -8,13 +8,14 @@ const anaDemos = [
   { scenario_id: 'ana-warranty-catalog', message: 'o Teclado Air do pedido PED-1002 ainda está na garantia?' },
 ];
 
-test('five scenarios, messages from the identity demo scenarios when present', () => {
+test('six scenarios, messages from the identity demo scenarios when present', () => {
   const list = buildCompareScenarios('ana', anaDemos);
-  assert.deepEqual(list.map((s) => s.id), ['simples', 'pedido-fatura', 'composto', 'garantia-catalogo', 'reembolso']);
-  assert.equal(list[2].message, anaDemos[0].message);
-  assert.equal(list[2].source, 'roteiro');
+  assert.deepEqual(list.map((s) => s.id), ['simples', 'pedido-fatura', 'plano-paralelo', 'composto', 'garantia-catalogo', 'reembolso']);
+  assert.equal(list[3].message, anaDemos[0].message);
+  assert.equal(list[3].source, 'roteiro');
+  assert.equal(list[2].source, 'fixo');   // sem o roteiro ana-parallel-plan na lista, usa o texto fixo
   assert.equal(list[0].message, 'onde está meu pedido PED-1001?');
-  assert.equal(list[4].source, 'fixo');
+  assert.equal(list[5].source, 'fixo');
   assert.ok(list.every((s) => s.tests.length > 20));
 });
 
@@ -26,7 +27,7 @@ test('fixed messages only use ids that belong to the identity', () => {
     }
   }
   const diego = buildCompareScenarios('diego', [{ scenario_id: 'diego-refund-return', message: 'solicite o reembolso do pedido PED-4001…' }]);
-  assert.equal(diego[4].scenarioId, 'diego-refund-return');
+  assert.equal(diego[5].scenarioId, 'diego-refund-return');
   // another identity's scenario never leaks in
   const bruno = buildCompareScenarios('bruno', anaDemos);
   assert.ok(bruno.every((s) => !/PED-1/.test(s.message)));

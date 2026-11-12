@@ -227,20 +227,21 @@ async def test_overdue_shipment_searches_the_carrier_with_a_server_built_query(m
     provider = FakeProvider()
     monkeypatch.setattr(web_search, "PROVIDER_CALL", provider)
     store = await memory_store(seeded=True)
-    result = await run_logistics_agent(store, "cadê o PED-1001? meu cpf é 123.456.789-09", ANA,
+    result = await run_logistics_agent(store, "cadê o PED-1003? meu cpf é 123.456.789-09", ANA,
                                        context={"web_cfg": CFG})
-    # o seed ancora as datas no dia em que roda (aqui, o relógio congelado): PED-1001 venceu há 5 dias
-    assert result.event.result["estimated_delivery"] == (NOW.date() - timedelta(days=5)).isoformat()
-    assert result.event.result["delivery_overdue"] is True and result.event.result["days_until_delivery"] == -5
+    # o seed ancora as datas no dia em que roda (aqui, o relógio congelado): PED-1003 venceu há 3 dias
+    assert result.event.result["estimated_delivery"] == (NOW.date() - timedelta(days=3)).isoformat()
+    assert result.event.result["delivery_overdue"] is True and result.event.result["days_until_delivery"] == -3
     assert provider.calls == ["Correios Express atraso entregas Brasil"]       # do documento, nunca do texto do cliente
     assert [e.op for e in result.extra_events] == ["external"]
-    assert "venceu há 5 dia(s)" in result.response and "https://example.com/noticia" in result.response
+    assert "venceu há 3 dia(s)" in result.response and "https://example.com/noticia" in result.response
 
 
 @pytest.mark.parametrize("message,context", [
-    ("cadê o PED-1001?", {}),                                   # web desligada (sem cfg)
-    ("quero reagendar a entrega do PED-1001", {"web_cfg": CFG}),  # escrita: nunca no mesmo hop da busca
+    ("cadê o PED-1003?", {}),                                   # web desligada (sem cfg)
+    ("quero reagendar a entrega do PED-1003", {"web_cfg": CFG}),  # escrita: nunca no mesmo hop da busca
     ("cadê o PED-1002?", {"web_cfg": CFG}),                     # entregue: nada a investigar
+    ("cadê o PED-1001?", {"web_cfg": CFG}),                     # chegou (com defeito): nada a investigar
 ])
 async def test_no_search_when_not_needed_or_not_allowed(monkeypatch, message, context):
     provider = FakeProvider()
@@ -279,7 +280,7 @@ async def test_web_taint_stops_a_write_agent_and_the_write_never_reaches_the_dat
 
     monkeypatch.setitem(agents.RUNNERS, "logistics_agent", fake_logistics)
     monkeypatch.setitem(agents.RUNNERS, "order_agent", fake_order)
-    out = await svc.run_turn("qual a transportadora do PED-1001?", ANA, None)
+    out = await svc.run_turn("qual a transportadora do PED-1003?", ANA, None)
     assert out.active_agent == "logistics_agent" or "logistics_agent" in [e.agent for e in out.timeline]
     assert wrote == [] and await store.find_many("support_tickets", {"ticket_id": "NUNCA"}) == []
     assert "confirme o pedido numa nova mensagem" in out.response
@@ -301,7 +302,7 @@ async def test_turn_without_web_still_hands_off_to_the_write_agent(monkeypatch):
 
     monkeypatch.setitem(agents.RUNNERS, "logistics_agent", fake_logistics)
     monkeypatch.setitem(agents.RUNNERS, "order_agent", fake_order)
-    out = await svc.run_turn("qual a transportadora do PED-1001?", ANA, None)
+    out = await svc.run_turn("qual a transportadora do PED-1003?", ANA, None)
     assert wrote == [True] and not any(e.reason == "web_taint" for e in out.timeline)
 
 
@@ -319,7 +320,7 @@ async def test_web_cfg_from_registry_reaches_the_agent_context(monkeypatch):
 
     monkeypatch.setattr(web_search, "get_config", fake_cfg)
     monkeypatch.setitem(agents.RUNNERS, "logistics_agent", fake_logistics)
-    await svc.run_turn("qual a transportadora do PED-1001?", ANA, None)
+    await svc.run_turn("qual a transportadora do PED-1003?", ANA, None)
     await svc.run_turn("qual a transportadora do PED-3001?", {**ANA, "customer_key": "carla", "area": "financeiro"}, None)
     assert seen == [CFG, None]
 
@@ -358,7 +359,7 @@ async def test_server_appends_sources_when_the_model_forgets_the_url(monkeypatch
 
     monkeypatch.setattr(agents, "llm_synthesize", no_url)
     store = await memory_store(seeded=True)
-    result = await run_logistics_agent(store, "a transportadora do meu pedido PED-1001 está com problema?", ANA,
+    result = await run_logistics_agent(store, "a transportadora do meu pedido PED-1003 está com problema?", ANA,
                                        llm=object(), context={"web_cfg": CFG})
     assert result.response.endswith("Fontes consultadas: https://example.com/noticia")
 

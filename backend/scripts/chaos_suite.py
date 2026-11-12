@@ -334,7 +334,7 @@ def web_on():
         web_search.PROVIDER_CALL, web_search.get_config = saved
 
 
-WEB_TURN = "qual a transportadora do PED-1001?"   # PED-1001: em trânsito, previsão vencida → busca a transportadora
+WEB_TURN = "qual a transportadora do PED-1003?"   # PED-1003: em trânsito, previsão vencida → busca a transportadora
 
 
 def _answered_from_mongo(response) -> bool:

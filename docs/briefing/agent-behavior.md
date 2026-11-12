@@ -69,7 +69,7 @@ Fora de escopo emite um evento de timeline `guardrail` com `result.out_of_scope:
 
 ---
 
-**Fan-out paralelo** (`router.py::detect_fanout`): se a mensagem bate keyword de `order_agent` E `billing_agent` ao mesmo tempo (e SÓ esse par — qualquer outro agente no meio aborta o fan-out), os dois rodam em `asyncio.gather` de verdade, não em cadeia — é o único caso de paralelismo real no sistema (`orchestration.py:150`, `_run_fanout`). Mudança de status sujeita a política de aprovação (o reembolso, no seed) nunca vai ao fan-out (`orchestration_graph.py::n_fanout_check`): o fan-out não pausa, e a escrita precisa passar pela aprovação humana da cadeia.
+**Fan-out paralelo** (`router.py::detect_fanout`): se a mensagem bate keyword de `order_agent` E `billing_agent` ao mesmo tempo (e SÓ esse par — qualquer outro agente no meio aborta o fan-out), os dois rodam em `asyncio.gather` de verdade, não em cadeia (`orchestration.py:150`, `_run_fanout`). O outro paralelismo é o do **plano**: passos de leitura sem dependência pendente rodam juntos no mesmo hop (`orchestration_graph.py::_parallel_companions` e `::_opening_batch`; escrita nunca é paralela). Mudança de status sujeita a política de aprovação (o reembolso, no seed) nunca vai ao fan-out (`orchestration_graph.py::n_fanout_check`): o fan-out não pausa, e a escrita precisa passar pela aprovação humana da cadeia.
 
 ---
 

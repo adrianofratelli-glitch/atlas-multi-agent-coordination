@@ -114,6 +114,8 @@ class TurnState(TypedDict, total=False):
     hitl_policies: list
     touched: dict
     plan: list
+    parallel_with: list
+    next_companions: list
     resumed: bool
     final_response: str
 
@@ -531,13 +533,50 @@ async def n_chain_prepare(state: TurnState, config) -> dict:
                                         status="open", extra={"plan": plan})
     return {
         "timeline": timeline, "tail_start": tail_start, "first_hint": history_hint + long_term_hint,
-        "current": target, "hop": 0, "visit_counts": {target: 1}, "handoff_path": [target],
-        "responses": [], "tail_notes": [], "board": [], "handoff_chain": [], "web_tainted": False,
+        "current": target, "hop": 0,
+        "responses": [], "tail_notes": [], "board": [], "web_tainted": False,
         "loop_visits": [], "next_agent": None, "next_task": None, "pending_action": None,
         "turn_id": turn_id, "detected": detected, "hitl_policies": await hitl.load_policies(svc.store),
         "touched": {}, "plan": plan,
         "next_task_in": (plan[0]["task"] if plan and plan[0]["agent"] == target else None),
+        **(await _opening_batch(svc, state, timeline, plan, target, turn_id)),
     }
+
+
+async def _opening_batch(svc, state: TurnState, timeline: list, plan: list, target: str, turn_id: str) -> dict:
+    """Passos do plano sem dependência nenhuma rodam JÁ no 1º hop, junto com o agente da rota determinística
+    (que continua abrindo a cadeia). Mesmas regras de `_parallel_companions` (só leitura, sem pedido de escrita)."""
+    if not plan:
+        return {"visit_counts": {target: 1}, "handoff_path": [target], "handoff_chain": [], "parallel_with": []}
+    probe = {**state, "plan": plan, "hop": 0, "pending_action": None}
+    visit_counts = {target: 1}
+    companions = _parallel_companions(probe, "orchestrator", target, visit_counts)
+    if not companions:
+        return {"visit_counts": visit_counts, "handoff_path": [target], "handoff_chain": [], "parallel_with": []}
+    customer, conversation_id = state["customer"], state["conversation_id"]
+    timeline.append(TimelineEvent(category="fanout", agent="orchestrator", collection="multiagent_brain.routing_rules",
+                                   title="Despacho paralelo do plano: passos de leitura independentes rodam juntos",
+                                   result={"agents": [target, *[c["agent"] for c in companions]],
+                                           "reason": "sem dependência pendente e sem escrita"}))
+    handoffs, path = [], [target]
+    for companion in companions:
+        doc = {"conversation_id": conversation_id, "customer_key": customer["customer_key"], "from_agent": "orchestrator",
+               "to_agent": companion["agent"], "reason": "plano do turno (em paralelo)", "at": utcnow()}
+        if companion.get("task"):
+            doc["task"] = companion["task"][:300]
+        await svc.store.insert_one("agent_handoffs", doc)
+        timeline.append(TimelineEvent(category="handoff", title="Handoff explícito (em paralelo)", agent="orchestrator",
+                                       collection="agent_handoffs", op="write", filter={"conversation_id": conversation_id},
+                                       result={"to_agent": companion["agent"], "revisit": False,
+                                               "task": companion.get("task"), "parallel": True},
+                                       reason="plano do turno (em paralelo)"))
+        visit_counts[companion["agent"]] = 1
+        handoffs.append(doc)
+        path.append(companion["agent"])
+    await metrics.increment("coordination.parallel_steps", len(companions))
+    from .blackboard import safe_task
+    return {"visit_counts": visit_counts, "handoff_path": path, "handoff_chain": handoffs,
+            "parallel_with": [{"agent": c["agent"], "task": safe_task(c.get("task"))} for c in companions]}
 
 
 def _handoff_targets(state: TurnState, current: str) -> list[str]:
@@ -571,7 +610,6 @@ async def n_agent_hop(state: TurnState, config) -> dict:
     runner = RUNNERS.get(current)
     if not runner:
         return out
-    held = bool(state.get("pending_action")) and current in WRITE_EFFECT_AGENTS
     if state["web_tainted"] and current in WRITE_EFFECT_AGENTS:
         await metrics.increment("web.taint_blocked")
         tail.append("Para eu seguir com a próxima etapa, confirme o pedido numa nova mensagem — neste atendimento "
@@ -612,24 +650,29 @@ async def n_agent_hop(state: TurnState, config) -> dict:
     board_summary = blackboard.summary_for_prompt(state["board"])
     hint = (state["first_hint"] if hop == 0 else "") + (("\n" + board_summary) if board_summary else "")
     targets = _handoff_targets(state, current)
-    agent_doc = registry.get(current)
-    ctx_sink: list = []   # o ToolContext do hop, visível mesmo se o timeout cancelar o loop
-    with observability.span("agent", agent=current, conversation_id=conversation_id, hop=hop, intent=decision.intent):
+    companions = [c for c in (state.get("parallel_with") or []) if c.get("agent") in registry and RUNNERS.get(c["agent"])]
+
+    async def _execute(agent_key: str, task: str | None, *, main: bool, sink: list):
+        """Um agente do hop: tool calling, ou o runner determinístico como fallback (com timeout)."""
+        doc = registry.get(agent_key)
+        agent_runner = RUNNERS[agent_key]
+        agent_held = bool(state.get("pending_action")) and agent_key in WRITE_EFFECT_AGENTS
+
         async def _run_agent():
-            await chaos.hook("agent", name=current)
+            await chaos.hook("agent", name=agent_key)
             calls_before = len(budget.llm_calls)
             result = await agent_loop.run_tool_agent(
-                ctx_sink=ctx_sink,
-                store=svc.store, llm=svc.llm, budget=budget, agent_key=current, agent_doc=agent_doc,
-                message=masked, customer=customer, conversation_id=conversation_id, turn_context=turn_context,
-                task=state.get("next_task_in"), board_summary=board_summary, detected=state["detected"],
-                handoff_targets=targets, hitl_policies=state["hitl_policies"],
-                hold_writes=bool(state.get("pending_action")),
+                ctx_sink=sink,
+                store=svc.store, llm=svc.llm, budget=budget, agent_key=agent_key, agent_doc=doc,
+                message=masked, customer=customer, conversation_id=conversation_id, turn_context=dict(turn_context),
+                task=task, board_summary=board_summary, detected=state["detected"],
+                handoff_targets=targets if main else [], hitl_policies=state["hitl_policies"],
+                hold_writes=bool(state.get("pending_action")) or bool(companions),
                 extra_hint=state["first_hint"] if hop == 0 else "", tainted=state["web_tainted"])
-            if result is None and held:
+            if result is None and agent_held:
                 # Escrita deste turno aguarda aprovação: o runner determinístico (que escreve direto, sem os
                 # portões das tools) não roda para um agente que escreve.
-                held_event = TimelineEvent(category="agent", agent=current, title="Etapa adiada: escrita aguardando aprovação humana",
+                held_event = TimelineEvent(category="agent", agent=agent_key, title="Etapa adiada: escrita aguardando aprovação humana",
                                            result={"held": True})
                 return AgentResult("Esta etapa depende da decisão do analista; peça de novo depois dela.", held_event)
             if result is None:
@@ -637,37 +680,62 @@ async def n_agent_hop(state: TurnState, config) -> dict:
                 # o retry de novo na síntese. Sem tentativa (sem modelo, flag desligada): runner normal.
                 provider_failed = any(call.get("status") in ("error", "circuit_open")
                                       for call in budget.llm_calls[calls_before:])
-                result = await runner(svc.store, masked, customer, None if provider_failed else svc.llm,
-                                      budget, agent_doc, hint, turn_context)
+                result = await agent_runner(svc.store, masked, customer, None if provider_failed else svc.llm,
+                                            budget, doc, hint, dict(turn_context))
             return result
 
-        call = _run_agent()
-        if not supervisor["graceful"]:
-            result = await call
-        else:
-            try:
-                result = await resilience.run_with_timeout(call, supervisor["timeout"])
-            except BudgetExceeded:
+        with observability.span("agent", agent=agent_key, conversation_id=conversation_id, hop=hop,
+                                intent=decision.intent, parallel=bool(companions)):
+            if not supervisor["graceful"]:
+                return await _run_agent()
+            return await resilience.run_with_timeout(_run_agent(), supervisor["timeout"])
+
+    ctx_sink: list = []   # o ToolContext do hop, visível mesmo se o timeout cancelar o loop
+    main_call = _execute(current, state.get("next_task_in"), main=True, sink=ctx_sink)
+    companion_sinks = [[] for _ in companions]
+    if companions:
+        # Passos de LEITURA do plano sem dependência pendente rodam juntos (asyncio.gather); escrita nunca
+        # entra aqui (`_parallel_companions`). Cada um tem seu ToolContext; o quadro recebe uma entrada por agente.
+        gathered = await asyncio.gather(
+            main_call, *[_execute(c["agent"], c.get("task"), main=False, sink=companion_sinks[i])
+                         for i, c in enumerate(companions)], return_exceptions=True)
+        main_outcome, companion_outcomes = gathered[0], gathered[1:]
+    else:
+        try:
+            main_outcome = await main_call
+        except BudgetExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if not supervisor["graceful"]:
                 raise
-            except Exception as exc:  # noqa: BLE001 — degradação graciosa (padrão)
-                await metrics.increment(f"agent.{current}.failures")
-                done_writes = [a for a in (ctx_sink[0].actions if ctx_sink else []) if a.get("effect") == "write"]
-                if done_writes:
-                    # A escrita já foi commitada antes da falha/timeout: o cliente PRECISA saber.
-                    tail.append(" ".join(a.get("summary") or f"Operação {a.get('tool')} concluída." for a in done_writes))
-                    timeline.extend(ctx_sink[0].events)
-                tail.append(resilience.degraded_reply(current))
-                timeline.append(TimelineEvent(category="agent", title="Agente degradado (falha contida pelo supervisor)",
-                                               agent=current, result={"error_type": type(exc).__name__,
-                                                                      "timeout_seconds": supervisor["timeout"],
-                                                                      "writes_before_failure": [a.get("tool") for a in done_writes]}))
-                board = state["board"]
-                if done_writes:
-                    entry = blackboard.entry_for(hop, current, state.get("next_task_in"), "degraded", done_writes, "")
-                    board = [*board, entry]
-                    await blackboard.append_entry(svc.store, turn_id=state["turn_id"],
-                                                  customer_key=customer["customer_key"], entry=entry)
-                return {**out, "tail_notes": tail, "timeline": timeline, "loop_visits": loop_visits, "board": board}
+            main_outcome = exc
+        companion_outcomes = []
+    if isinstance(main_outcome, BudgetExceeded):
+        raise main_outcome
+    if isinstance(main_outcome, BaseException):
+        if not supervisor["graceful"]:
+            raise main_outcome
+        exc = main_outcome
+        await metrics.increment(f"agent.{current}.failures")
+        done_writes = [a for a in (ctx_sink[0].actions if ctx_sink else []) if a.get("effect") == "write"]
+        if done_writes:
+            # A escrita já foi commitada antes da falha/timeout: o cliente PRECISA saber.
+            tail.append(" ".join(a.get("summary") or f"Operação {a.get('tool')} concluída." for a in done_writes))
+            timeline.extend(ctx_sink[0].events)
+        tail.append(resilience.degraded_reply(current))
+        timeline.append(TimelineEvent(category="agent", title="Agente degradado (falha contida pelo supervisor)",
+                                       agent=current, result={"error_type": type(exc).__name__,
+                                                              "timeout_seconds": supervisor["timeout"],
+                                                              "writes_before_failure": [a.get("tool") for a in done_writes]}))
+        board = state["board"]
+        if done_writes:
+            entry = blackboard.entry_for(hop, current, state.get("next_task_in"), "degraded", done_writes, "")
+            board = [*board, entry]
+            await blackboard.append_entry(svc.store, turn_id=state["turn_id"],
+                                          customer_key=customer["customer_key"], entry=entry)
+        return {**out, "tail_notes": tail, "timeline": timeline, "loop_visits": loop_visits, "board": board,
+                "parallel_with": []}
+    result = main_outcome
     timeline.append(result.event)
     timeline.extend(result.extra_events)
     responses.append(result.response)
@@ -700,6 +768,31 @@ async def n_agent_hop(state: TurnState, config) -> dict:
                                    title=f"Quadro do turno: entrada de {current}", filter={"turn_id": state["turn_id"]},
                                    result={"hop": hop, "mode": result.mode,
                                            "writes": [a.get("tool") for a in result.actions if a.get("effect") == "write"]}))
+    for companion, outcome, sink in zip(companions, companion_outcomes, companion_sinks):
+        agent_key = companion["agent"]
+        if isinstance(outcome, BudgetExceeded) or isinstance(outcome, BaseException):
+            await metrics.increment(f"agent.{agent_key}.failures")
+            tail.append(resilience.degraded_reply(agent_key))
+            timeline.append(TimelineEvent(category="agent", agent=agent_key, title="Agente degradado (falha contida pelo supervisor)",
+                                           result={"error_type": type(outcome).__name__, "parallel": True}))
+            continue
+        await metrics.increment(f"agent.{agent_key}.turns")
+        timeline.append(outcome.event)
+        timeline.extend(outcome.extra_events)
+        responses.append(outcome.response)
+        touched.update({k: v for k, v in (outcome.touched or {}).items() if v and k not in touched})
+        web_tainted = web_tainted or outcome.tainted or any(
+            event.op == "external" for event in [outcome.event, *outcome.extra_events])
+        companion_entry = blackboard.entry_for(hop, agent_key, companion.get("task"), outcome.mode, outcome.actions,
+                                               outcome.response, None)
+        board = [*board, companion_entry]
+        await blackboard.append_entry(svc.store, turn_id=state["turn_id"], customer_key=customer["customer_key"],
+                                      entry=companion_entry)
+        timeline.append(TimelineEvent(category="coordination", agent=agent_key, collection="turn_blackboard", op="write",
+                                       title=f"Quadro do turno: entrada de {agent_key} (em paralelo)",
+                                       filter={"turn_id": state["turn_id"]},
+                                       result={"hop": hop, "mode": outcome.mode, "parallel": True, "writes": []}))
+    out["parallel_with"] = []
     update = {**{k: v for k, v in out.items() if k != "_budget_stop"}, "timeline": timeline, "responses": responses,
               "tail_notes": tail, "board": board,
               "web_tainted": web_tainted, "loop_visits": loop_visits, "touched": touched}
@@ -799,9 +892,69 @@ async def _record_handoff(svc, state, update, current, destination, reason, task
                                            agent=current, result={"error_type": type(exc).__name__, "to_agent": destination}))
             return {**update, "tail_notes": tail, "timeline": timeline}
     visit_counts[destination] = visit_counts.get(destination, 0) + 1
+    handoffs, path = [*state["handoff_chain"], handoff], [*state["handoff_path"], destination]
+    companions = _parallel_companions(state, current, destination, visit_counts)
+    if companions:
+        timeline.append(TimelineEvent(category="fanout", agent="orchestrator", collection="multiagent_brain.routing_rules",
+                                       title="Despacho paralelo do plano: passos de leitura independentes rodam juntos",
+                                       result={"agents": [destination, *[c["agent"] for c in companions]],
+                                               "reason": "sem dependência pendente e sem escrita"}))
+        for companion in companions:
+            extra = {"conversation_id": conversation_id, "customer_key": customer["customer_key"], "from_agent": current,
+                     "to_agent": companion["agent"], "reason": "plano do turno (em paralelo)", "at": utcnow()}
+            if companion.get("task"):
+                extra["task"] = companion["task"][:300]
+            await svc.store.insert_one("agent_handoffs", extra)
+            timeline.append(TimelineEvent(category="handoff", title="Handoff explícito (em paralelo)", agent=current,
+                                           collection="agent_handoffs", op="write", filter={"conversation_id": conversation_id},
+                                           result={"to_agent": companion["agent"], "revisit": False,
+                                                   "task": companion.get("task"), "parallel": True},
+                                           reason="plano do turno (em paralelo)"))
+            visit_counts[companion["agent"]] = visit_counts.get(companion["agent"], 0) + 1
+            handoffs.append(extra)
+            path.append(companion["agent"])
+        await metrics.increment("coordination.parallel_steps", len(companions))
     return {**update, "timeline": timeline, "tail_notes": tail, "visit_counts": visit_counts,
-            "handoff_chain": [*state["handoff_chain"], handoff], "handoff_path": [*state["handoff_path"], destination],
+            "handoff_chain": handoffs, "handoff_path": path, "next_companions": companions,
             "next_agent": destination, "next_task": task, "hop": state["hop"] + 1}
+
+
+MAX_PARALLEL = 3
+
+
+def _parallel_companions(state: TurnState, current: str, destination: str, visit_counts: dict) -> list[dict]:
+    """Outros passos do plano que podem rodar JUNTO com `destination`: só leitura (agente que não escreve, ou
+    que escreve mas sem pedido de escrita dele na mensagem), ainda não visitados e com as dependências
+    (`after`) já atendidas.
+
+    Escrita fica de fora de propósito ("writes stay single-threaded"): a ordem diagnóstico → recomendação →
+    troca continua sequencial quando o plano declara a dependência."""
+    from .orchestration import MAX_HOPS, WRITE_EFFECT_AGENTS
+    from .tools import explicit_write_intents, tools_for
+
+    def reads_only(agent: str) -> bool:
+        # Agente que PODE escrever entra no paralelo só se o cliente não pediu nenhuma escrita dele nesta
+        # mensagem (os mesmos sinais dos portões); no paralelo ele roda com escritas retidas.
+        if agent not in WRITE_EFFECT_AGENTS:
+            return True
+        names = [spec.name for spec in tools_for(state["registry"].get(agent), agent)]
+        return not explicit_write_intents(state["masked"], names)
+
+    plan = state.get("plan") or []
+    if not plan or not reads_only(destination) or state["hop"] + 2 >= MAX_HOPS:
+        return []
+    # Concluídos = já rodaram (o destino acabou de ser marcado em visit_counts, mas ainda NÃO rodou).
+    done = ({agent for agent, count in visit_counts.items() if count} - {destination}) | {current}
+    by_agent = {step["agent"]: step for step in plan}
+    if not set(by_agent.get(destination, {}).get("after") or []) <= done:
+        return []
+    paused = (state.get("pending_action") or {}).get("agent")
+    ready = [step for step in plan
+             if step["agent"] not in done and step["agent"] != destination and step["agent"] in state["registry"]
+             and reads_only(step["agent"]) and step["agent"] != paused
+             and set(step.get("after") or []) <= done]
+    room = max(0, MAX_HOPS - 2 - state["hop"])
+    return [{"agent": step["agent"], "task": step.get("task")} for step in ready[:min(MAX_PARALLEL, room)]]
 
 
 def _route_after_hop(state: TurnState) -> str:
@@ -815,7 +968,9 @@ def _route_after_hop(state: TurnState) -> str:
 async def n_advance(state: TurnState, config) -> dict:
     """Passa o bastão: o destino validado vira o agente corrente, com a tarefa que recebeu."""
     from .blackboard import safe_task
-    return {"current": state["next_agent"], "next_task_in": safe_task(state.get("next_task")), "next_agent": None}
+    companions = [{"agent": c["agent"], "task": safe_task(c.get("task"))} for c in state.get("next_companions") or []]
+    return {"current": state["next_agent"], "next_task_in": safe_task(state.get("next_task")), "next_agent": None,
+            "parallel_with": companions, "next_companions": []}
 
 
 async def n_approval(state: TurnState, config) -> dict:
@@ -920,6 +1075,11 @@ async def n_finalize(state: TurnState, config) -> dict:
     conversation_id, decision, target = state["conversation_id"], state["decision"], state["target"]
     timeline, current = state["timeline"], state["current"]
     response = state["final_response"]
+    # Citar a fonte externa é regra do SERVIDOR (ADR-005): se a resposta final não trouxe o link, ele entra aqui.
+    external_sources = [src for event in timeline if event.op == "external" and isinstance(event.result, dict)
+                        for src in (event.result.get("sources") or [])]
+    if external_sources and "http" not in response:
+        response += "\n\nFontes consultadas: " + " · ".join(dict.fromkeys(external_sources[:2]))
     left_out = await _confirmed_out_of_scope(svc.store, out_of_scope_sentences(masked))
     if left_out and state["responses"]:
         response += "\n\n" + " ".join(f"Sobre “{sentence}”: isso foge do que eu resolvo por aqui, então segui só com o restante." for sentence in left_out)

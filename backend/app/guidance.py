@@ -2,7 +2,7 @@
 
 Regra desta camada: uma sugestão só existe se o documento que a sustenta existe.
 Nunca "você quer perguntar sobre um pedido?" no vazio — sempre "quer acompanhar o
-PED-1001 (Fone Pulse X, enviado)?", com o id lido de `orders` naquele instante.
+PED-1003 (Mouse Flow, enviado)?", com o id lido de `orders` naquele instante.
 
 O motivo é o mesmo da PoV inteira: se a sugestão for genérica e plausível, alguém
 vai clicar nela e receber "não encontrei" — o beco sem saída volta um turno depois,

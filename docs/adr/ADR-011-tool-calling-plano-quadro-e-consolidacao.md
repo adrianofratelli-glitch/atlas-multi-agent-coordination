@@ -68,3 +68,18 @@ passo de latência.
   (reprodutibilidade, custo zero).
 - **Supervisor que chama todo especialista via tool**: um hop a mais por agente e o histórico do
   supervisor cresce com todas as observações.
+
+## Passos independentes em paralelo (2026-11-12, mesma data)
+
+O plano passou a trazer dependências (`depends_on` → `after`, validadas: só passo anterior; sem a informação,
+depende de todos os anteriores). Passos de LEITURA sem dependência pendente rodam juntos num mesmo super-step
+(`asyncio.gather`, cada um com seu ToolContext), já no 1º hop se nenhum depender do agente de abertura. Agente que
+pode escrever só entra no lote se a mensagem não pede escrita dele (os mesmos sinais dos portões) e roda com
+escritas retidas; escrita nunca é paralela ("writes stay single-threaded"). Cada agente do lote grava sua entrada
+no quadro e seu handoff (o change stream mostra os despachos simultâneos). Medido ao vivo: "status do PED-1003 +
+fatura + pontos" com os três especialistas juntos em 27,9 s; o cenário principal continua sequencial porque o plano
+declara a dependência (diagnóstico → recomendação → troca → entrega da reposição) — paralelizá-lo seria errado.
+
+A busca web voltou a ser decisão do servidor também no tool calling (ADR-005): ler uma entrega vencida com a
+ferramenta ligada dispara a busca uma vez por turno (o modelo, sozinho, nunca chamava `search_carrier_news`);
+pedido explícito de reagendamento tem prioridade e não busca; as fontes entram na resposta final pelo servidor.

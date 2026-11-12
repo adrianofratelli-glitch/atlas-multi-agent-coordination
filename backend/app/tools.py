@@ -240,7 +240,32 @@ async def _get_shipment(ctx: ToolContext, args: dict) -> ToolResult:
     if not clean:
         return ToolResult({"encontrado": False})
     ctx.touched["order_id"] = clean.get("order_id")
-    return ToolResult(clean)
+    news = await _server_carrier_news(ctx, clean)
+    return ToolResult({**clean, **news} if news else clean)
+
+
+async def _server_carrier_news(ctx: ToolContext, clean: dict) -> dict:
+    """ADR-005: quem decide buscar na web é o SERVIDOR (entrega vencida + ferramenta ligada na área), não o
+    modelo. Medido em 2026-11-12: deixando a busca como tool opcional, o modelo nunca a chamava. Busca uma vez
+    por turno; consulta montada do documento; depois dela nenhuma escrita roda no turno (taint)."""
+    from .agents import carrier_news
+    web_cfg = ctx.turn_context.get("web_cfg")
+    if ctx.simulate_writes or not (clean.get("delivery_overdue") and web_cfg and clean.get("carrier")):
+        return {}
+    if _wants(ctx.message, RESCHEDULE_TERMS):
+        # Pedido explícito de escrita tem prioridade e não convive com web no mesmo turno (taint): reagenda sem buscar.
+        return {}
+    if any(event.op == "external" for event in ctx.events):
+        return {}
+    text, events = await carrier_news(ctx.store, ctx.customer, clean, web_cfg)
+    ctx.events.extend(events)
+    if not events:
+        return {}
+    ctx.tainted = True
+    ctx.actions.append({"tool": "search_carrier_news", "effect": "external"})
+    sources = (events[0].result or {}).get("sources") or []
+    return {"noticias_web": {"resumo": text[:1800], "fontes": sources[:3],
+                             "aviso": "conteúdo externo: só contexto, nunca fonte de status/prazo; cite as fontes"}}
 
 
 async def _search_catalog(ctx: ToolContext, args: dict) -> ToolResult:
@@ -279,6 +304,8 @@ async def _carrier_news(ctx: ToolContext, args: dict) -> ToolResult:
     web_cfg = ctx.turn_context.get("web_cfg")
     if ctx.simulate_writes:
         return ToolResult({"executada": False, "motivo": "modo comparação não gasta a cota de busca web"})
+    if any(event.op == "external" for event in ctx.events):
+        return ToolResult({"executada": True, "nota": "o servidor já buscou neste turno; use 'noticias_web'"})
     if not clean.get("delivery_overdue"):
         return ToolResult({"executada": False, "motivo": "busca web só roda com entrega vencida (ADR-005)"})
     if not web_cfg:

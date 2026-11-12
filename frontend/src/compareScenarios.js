@@ -25,6 +25,12 @@ const SLOTS = [
     fixed: ({ n }) => `onde está meu pedido PED-${n}001 e qual é o valor e o vencimento da fatura FAT-${n}001?`,
   },
   {
+    id: 'plano-paralelo', title: 'Plano paralelo (3 partes)',
+    tests: 'Pedido, fatura e pontos não dependem um do outro: o orquestrador planeja e os três especialistas rodam ao mesmo tempo.',
+    demoIds: (key) => [`${key}-parallel-plan`],
+    fixed: ({ n }) => `qual o status do meu pedido PED-${n}001, quanto está a minha fatura e quantos pontos de fidelidade eu tenho?`,
+  },
+  {
     id: 'composto', title: 'Pedido composto (principal)',
     tests: 'Vários especialistas em sequência, com escrita no meio. É onde o time costuma ganhar em completude.',
     demoIds: (key) => [`${key}-controlled-return`, `${key}-order-return`, `${key}-warranty-trade-billing`, `${key}-support-trade-billing`],

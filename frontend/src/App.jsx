@@ -12,6 +12,7 @@ import CrashResumeDialog from './components/CrashResume.jsx';
 // Cinco destinos (contrato de UI: no máximo cinco); Guardrails mora dentro de Agentes.
 const NAV = ['Chat', 'A/B', 'Agentes', 'Decisões', 'Métricas'];
 const IDENTITIES = ['ana', 'bruno', 'carla', 'diego'];
+const IDENTITY_KEY = 'multi-agent-identity';
 // Cadeia de dois agentes com retorno controlado: o turno cai antes do 2º hop e retoma do checkpoint.
 const crashMessage = (customerKey) => {
   const n = Math.max(0, IDENTITIES.indexOf(customerKey)) + 1;
@@ -87,6 +88,7 @@ export default function App() {
   // na tela parece que o cliente já falou com o agente. a retomada continua valendo ao trocar de
   // identidade no meio da sessão, que é quando ela realmente evita um painel vazio.
   const switchIdentity = async (customerKey, { resume = true } = {}) => {
+    try { localStorage.setItem(IDENTITY_KEY, customerKey); } catch { /* storage indisponível: só não lembra */ }
     if (operationRef.current) return;
     operationRef.current = true; setBusy(true); setError('');
     // Never display the previous identity's conversation while its replacement loads.
@@ -114,7 +116,14 @@ export default function App() {
     } catch (err) { setCustomer(null); setError(err.message); }
     finally { operationRef.current = false; setBusy(false); }
   };
-  useEffect(() => { api.warmup(); switchIdentity('ana', { resume: false }); }, []);
+  // Recarregar a página volta para a mesma identidade e retoma a última conversa dela (conveniência por
+  // navegador; sem storage disponível, começa na Ana como antes).
+  useEffect(() => {
+    let saved = null;
+    try { saved = localStorage.getItem(IDENTITY_KEY); } catch { saved = null; }
+    api.warmup();
+    switchIdentity(IDENTITIES.includes(saved) ? saved : 'ana', { resume: true });
+  }, []);
 
   useEffect(() => {
     if (nav === 'Métricas' && adminMode) {

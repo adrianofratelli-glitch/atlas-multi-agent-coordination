@@ -31,7 +31,7 @@
       "expected_agents": ["order_agent", "billing_agent"],
       "forbidden_agents": ["product_agent", "loyalty_agent", "support_agent"],
       "expect_state": [
-        {"collection": "orders", "filter": {"order_id": "PED-1001"}, "field": "status", "equals": "enviado"}
+        {"collection": "orders", "filter": {"order_id": "PED-1001"}, "field": "status", "equals": "entregue"}
       ],
       "notes": "Fan-out paralelo pedido + fatura (único par permitido em paralelo). Somente leitura."
     },

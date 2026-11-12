@@ -15,7 +15,8 @@ CUSTOMERS = [
 # Antes eram absolutas (julho/2026) e a demo envelhecia: em novembro a logística dizia "116 dias além da data
 # prevista". As distâncias são as do roteiro original deslocado em bloco (âncora: o original 2026-07-24 vira
 # "hoje"), então ordem dos eventos, cadeia de trocas e vereditos ficam iguais: todas as previsões dos pedidos
-# não entregues já venceram (PED-1001 há 5 dias: dispara a busca web, ADR-005), todos os pedidos seguem na
+# não entregues já venceram (PED-1003 há 3 dias: dispara a busca web, ADR-005; PED-1001 foi entregue há 4 dias,
+# dentro da janela de troca do KB-003), todos os pedidos seguem na
 # garantia, faturas abertas vencem no futuro e a paga já venceu. Os dias de atraso crescem até o próximo reset.
 
 
@@ -25,8 +26,11 @@ def _day(today: date, offset: int) -> str:
 
 def build_orders(today: date) -> list[dict]:
     return [
-        {"order_id": "PED-1001", "owner_customer_key": "ana", "product": "Fone Pulse X", "status": "enviado", "timeline": [{"status": "criado", "at": _day(today, -14)}, {"status": "enviado", "at": _day(today, -10)}]},
+        # PED-1001 já chegou (há 4 dias, dentro dos 7 dias do KB-003): é o pedido do roteiro "chegou com defeito".
+        {"order_id": "PED-1001", "owner_customer_key": "ana", "product": "Fone Pulse X", "status": "entregue", "timeline": [{"status": "criado", "at": _day(today, -14)}, {"status": "enviado", "at": _day(today, -10)}, {"status": "entregue", "at": _day(today, -4)}]},
         {"order_id": "PED-1002", "owner_customer_key": "ana", "product": "Teclado Air", "status": "troca_solicitada", "replacement_order_id": "PED-1012", "replacement_reason": "tecla travando", "timeline": [{"status": "criado", "at": _day(today, -22)}, {"status": "entregue", "at": _day(today, -12)}, {"status": "troca_solicitada", "at": _day(today, -8)}]},
+        # PED-1003 ainda não chegou e a previsão venceu há 3 dias: é o caso "atrasado" da Ana (busca web, ADR-005).
+        {"order_id": "PED-1003", "owner_customer_key": "ana", "product": "Mouse Flow", "status": "enviado", "timeline": [{"status": "criado", "at": _day(today, -12)}, {"status": "enviado", "at": _day(today, -9)}]},
         {"order_id": "PED-1012", "owner_customer_key": "ana", "product": "Teclado Air", "status": "entregue", "replacement_reason": "reposição única", "timeline": [{"status": "criado", "at": _day(today, -6)}, {"status": "entregue", "at": _day(today, -2)}]},
         {"order_id": "PED-2001", "owner_customer_key": "bruno", "product": "Monitor View 27", "status": "processando", "timeline": [{"status": "criado", "at": _day(today, -9)}]},
         # Cadeia de trocas da Carla: mesmo Smartwatch Fit trocado três vezes. Cada elo é um pedido
@@ -98,7 +102,9 @@ LOYALTY_ACCOUNTS = [
 
 def build_shipments(today: date) -> list[dict]:
     return [
-        {"order_id": "PED-1001", "owner_customer_key": "ana", "carrier": "Correios Express", "tracking_code": "BR123456789ANA", "estimated_delivery": _day(today, -5), "current_location": "Centro de distribuição — São Paulo, SP"},
+        {"order_id": "PED-1001", "owner_customer_key": "ana", "carrier": "Correios Express", "tracking_code": "BR123456789ANA", "estimated_delivery": _day(today, -4), "current_location": "Entregue"},
+        # Maior previsão entre as entregas da Ana: "cadê meu pedido?" sem id cai aqui (load_shipment ordena por ETA).
+        {"order_id": "PED-1003", "owner_customer_key": "ana", "carrier": "Correios Express", "tracking_code": "BR323456789ANA", "estimated_delivery": _day(today, -3), "current_location": "Centro de distribuição — São Paulo, SP"},
         {"order_id": "PED-1002", "owner_customer_key": "ana", "carrier": "Correios Express", "tracking_code": "BR223456789ANA", "estimated_delivery": _day(today, -12), "current_location": "Entregue"},
         {"order_id": "PED-2001", "owner_customer_key": "bruno", "carrier": "Loggi", "tracking_code": "LG998877665BRU", "estimated_delivery": _day(today, -2), "current_location": "Aguardando coleta — centro de distribuição"},
         {"order_id": "PED-3001", "owner_customer_key": "carla", "carrier": "Jadlog", "tracking_code": "JD554433221CAR", "estimated_delivery": _day(today, -6), "current_location": "Em trânsito — Campinas, SP"},
@@ -451,6 +457,15 @@ DEMO_SCENARIOS = [
         "capabilities": ["rota determinística", "policy read", "não bloqueada"],
         "expected_agents": ["warranty_agent"], "expect_route_source": "rules",
         "expect_handoffs": 0, "expect_revisit": False, "warmup": True,
+    },
+    {
+        # Plano do orquestrador com partes independentes (ADR-011): os três especialistas rodam juntos no 1º hop.
+        # Só faz sentido com modelo (o plano é do LLM); por isso fica fora do golden eval determinístico.
+        "scenario_id": "ana-parallel-plan", "customer_key": "ana", "position": 8,
+        "label": "Plano paralelo: pedido + fatura + pontos",
+        "message": "qual o status do meu pedido PED-1003, quanto está a minha fatura e quantos pontos de fidelidade eu tenho?",
+        "capabilities": ["3 agentes ao mesmo tempo", "plano com dependências", "escrita nunca em paralelo"],
+        "demo_kind": "parallel_plan", "warmup": False,
     },
     {
         # Travessia de grafo + escalonamento pausável. A mensagem evita de propósito as

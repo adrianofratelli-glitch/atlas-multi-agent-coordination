@@ -29,15 +29,27 @@ def test_no_business_event_happens_in_the_future(today):
 
 
 @pytest.mark.parametrize("today", DAYS)
-def test_undelivered_shipments_are_overdue_and_ped_1001_by_five_days(today):
+def test_undelivered_shipments_are_overdue_and_ped_1003_by_three_days(today):
     shipments = {s["order_id"]: s for s in seed_documents(today)["shipments"]}
     pending = {key: s for key, s in shipments.items() if s["current_location"] != "Entregue"}
-    assert set(pending) == {"PED-1001", "PED-2001", "PED-3001", "PED-4001"}
+    assert set(pending) == {"PED-1003", "PED-2001", "PED-3001", "PED-4001"}
     assert all(_day(s["estimated_delivery"]) < today for s in pending.values())   # dispara busca web (ADR-005)
-    assert _day(shipments["PED-1001"]["estimated_delivery"]) == today - timedelta(days=5)
-    # a mais recente por previsão continua sendo a mesma (sort de estimated_delivery no logistics_agent)
+    assert _day(shipments["PED-1003"]["estimated_delivery"]) == today - timedelta(days=3)
+    # "cadê meu pedido?" sem id: a mais recente por previsão (sort do logistics_agent) é a atrasada
     ana = [s for s in shipments.values() if s["owner_customer_key"] == "ana"]
-    assert max(ana, key=lambda s: s["estimated_delivery"])["order_id"] == "PED-1001"
+    assert max(ana, key=lambda s: s["estimated_delivery"])["order_id"] == "PED-1003"
+
+
+@pytest.mark.parametrize("today", DAYS)
+def test_ped_1001_arrived_and_is_inside_the_kb003_return_window(today):
+    """O roteiro diz "chegou com defeito": entregue, e a troca em até 7 dias do KB-003 ainda vale."""
+    docs = seed_documents(today)
+    order = next(o for o in docs["orders"] if o["order_id"] == "PED-1001")
+    shipment = next(s for s in docs["shipments"] if s["order_id"] == "PED-1001")
+    assert order["status"] == "entregue" and shipment["current_location"] == "Entregue"
+    delivered = _day(next(t["at"] for t in order["timeline"] if t["status"] == "entregue"))
+    assert 0 < (today - delivered).days <= 7
+    assert _day(shipment["estimated_delivery"]) <= today
 
 
 @pytest.mark.parametrize("today", DAYS)
@@ -73,4 +85,4 @@ def test_default_anchor_is_the_turn_clock(monkeypatch):
     frozen = clock.local_now().replace(year=2030, month=3, day=15)
     monkeypatch.setattr(clock, "local_now", lambda: frozen)
     shipments = {s["order_id"]: s for s in seed_documents()["shipments"]}
-    assert shipments["PED-1001"]["estimated_delivery"] == "2030-03-10"
+    assert shipments["PED-1003"]["estimated_delivery"] == "2030-03-12"

@@ -235,12 +235,12 @@ export default function ComparePage({ labels = {}, customerKey, demoScenarios = 
             <div className="compare-actions">
               <button type="submit" className="primary-btn" disabled={busy || message.trim().length < 3}>{busy ? 'Comparando…' : 'Rodar A/B'}</button>
               <button type="button" className="ghost-btn" onClick={runAll} disabled={busy}
-                title="Roda os 5 cenários um depois do outro, respeitando o limite de 3 A/B por minuto">Rodar os 5 em sequência</button>
+                title="Roda todos os cenários um depois do outro, respeitando o limite de 3 A/B por minuto">Rodar todos em sequência</button>
               {busy && <button type="button" className="ghost-btn" onClick={cancel}>{status?.total ? 'Parar depois deste' : 'Parar de esperar'}</button>}
               {status?.phase === 'running' && <span className="compare-progress" role="status"><span className="pending-dot" />{step}{status.label}: {stage} · {elapsed} s</span>}
               {status?.phase === 'waiting' && <span className="compare-progress" role="status"><span className="pending-dot" />{step}Limite de 3 A/B por minuto: próximo em {waitLeft} s</span>}
             </div>
-            {!busy && <p className="panel-note">Com modelo real cada A/B leva de 30 a 90 segundos; os 5 em sequência levam alguns minutos.</p>}
+            {!busy && <p className="panel-note">Com modelo real cada A/B leva de 30 a 90 segundos; todos em sequência levam alguns minutos.</p>}
           </form>
         </div>
         <HowToRead />

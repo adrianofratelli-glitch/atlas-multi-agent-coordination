@@ -48,7 +48,7 @@ def main() -> None:
         simple.raise_for_status()
         body = simple.json()
         check(body["active_agent"] == "order_agent", "pedido roteado sem LLM")
-        check("PED-1001" in body["response"] and "enviado" in body["response"], "pedido usa dado real do seed")
+        check("PED-1001" in body["response"] and "entregue" in body["response"], "pedido usa dado real do seed")
 
         chain = None
         for probe in random.sample(HANDOFF_PROBES, len(HANDOFF_PROBES)):

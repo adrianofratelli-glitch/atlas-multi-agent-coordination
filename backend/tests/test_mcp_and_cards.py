@@ -156,7 +156,7 @@ async def test_write_tools_are_refused_and_bad_args_are_errors():
         write = await client.call_tool("request_order_status_change", {"order_id": "PED-1001", "status": "reembolsado"})
         assert write.is_error
         order = await store.find_one("orders", {"order_id": "PED-1001"})
-        assert order["status"] == "enviado"
+        assert order["status"] == "entregue"
         bad = await client.call_tool("get_order", {"order_id": "1001; drop"})
         assert bad.is_error
 
