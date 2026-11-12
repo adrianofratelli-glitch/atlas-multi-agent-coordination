@@ -31,6 +31,8 @@ jobs:
       - name: tag curta do commit
         id: tag
         run: echo "sha=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      # amd64 + arm64: o `docker pull` funciona também em Mac Apple Silicon sem --platform
+      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -40,6 +42,7 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ghcr.io/adrianofratelli-glitch/atlas-multi-agent-coordination:latest
