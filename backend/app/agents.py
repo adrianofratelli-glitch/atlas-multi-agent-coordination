@@ -103,7 +103,7 @@ def _is_trivial_lookup(message: str, *tokens: str | None, max_words: int = 0) ->
 
 _STATUS_INTENTS = (
     (("troca", "trocar", "troque", "troquem"), "troca_solicitada"),
-    (("reembolso", "reembolsar", "reembolse", "estornar", "estorno", "estorne"), "reembolsado"),
+    (("reembolso", "reembolsar", "reembolse", "estornar", "estorno", "estorne", "estorna", "dinheiro de volta"), "reembolsado"),
 )
 
 

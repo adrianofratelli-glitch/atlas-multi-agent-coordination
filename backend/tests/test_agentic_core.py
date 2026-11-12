@@ -571,6 +571,13 @@ async def test_analista_decide_antes_do_interrupt_e_o_turno_aplica_ao_chegar():
     ("não quero mais o reembolso, obrigado", False),
     ("solicite o reembolso do pedido PED-4001, consulte a entrega", True),
     ("meu fone chegou com defeito; quero um parecido mais barato e já quero trocar.", True),
+    ("o reembolso que pedi ainda não caiu", False),
+    ("obrigado pela troca!", False),
+    ("a troca chegou quebrada de novo", False),
+    ("o fone não carrega quero trocar o PED-1001", True),
+    ("nunca chegou quero o estorno do PED-1001", True),
+    ("estorna o PED-1001 por favor", True),
+    ("quero meu dinheiro de volta do PED-1001", True),
 ])
 async def test_portao_de_intencao_separa_pedido_de_pergunta(message, expected):
     status = tools_module.requested_status(message)

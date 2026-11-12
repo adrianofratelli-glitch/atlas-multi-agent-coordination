@@ -101,7 +101,13 @@ _NEGATED = re.compile(
     + r"|\b(cancel\w*|desist\w*|desfaz\w*|anul\w*|suspend\w*)\b[^,]{0,25}?\b" + _ACTION_TERM
     + r"|\b(pedi|solicitei|fiz|abri|pedimos|solicitamos|ja tinha)\b[^,]{0,25}?\b" + _ACTION_TERM
     + r"|\b(saber|entender|pensando|pensei|duvida|interesse|curiosidade|perguntar)\b[^,]{0,25}?\b" + _ACTION_TERM
-    + r"|\b(troca|reembolso|estorno|resgate|reagendamento|chamado|atendente)\s*,?\s*(nao|nunca)\b")
+    + r"|\b(troca|reembolso|estorno|resgate|reagendamento|chamado|atendente)\s*,?\s*(nao|nunca)\b"
+    # relato/estado do que já aconteceu ("o reembolso ainda não caiu", "a troca chegou quebrada")
+    + r"|\b(troca|reembolso|estorno|resgate|reagendamento|chamado)\b[^,]{0,25}?\b(chegou|caiu|apareceu|demorou|"
+      r"atrasou|que pedi|que solicitei|ja foi|foi feit[ao])\b"
+    + r"|^(obrigad\w*|valeu|recebi|entendi|ok)\b")
+# A janela de negação/relato termina num pedido explícito: "não funciona quero trocar" é pedido.
+_REQUEST_BREAK = re.compile(r"(?<!nao )(?<!nunca )(?<!nem )\b(quero|preciso|gostaria|solicito)\b")
 _POINTS_SWAP = re.compile(r"troc\w*\s+(os\s+|meus\s+|minhas\s+)?pontos")
 
 
@@ -113,7 +119,9 @@ def _clauses(message: str) -> list[tuple[str, bool]]:
         parts = [normalize(part).strip(" ,.;!?") for part in sentence.split(",")]
         parts = [part for part in parts if part]
         for index, norm in enumerate(parts):
-            not_request = bool(_QUESTION_START.match(norm) or _CONDITIONAL_START.match(norm) or _NEGATED.search(norm))
+            tail = _REQUEST_BREAK.split(norm)[-1] if _REQUEST_BREAK.search(norm) else norm
+            negated = _NEGATED.search(norm) and _NEGATED.search(tail) if tail != norm else _NEGATED.search(norm)
+            not_request = bool(_QUESTION_START.match(norm) or _CONDITIONAL_START.match(norm) or negated)
             if is_question and index == len(parts) - 1 and not _REQUEST_START.match(norm):
                 not_request = True
             out.append((norm, not_request))
