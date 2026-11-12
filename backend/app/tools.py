@@ -92,9 +92,16 @@ _QUESTION_START = re.compile(r"^(e )?(como|quanto|quantos|quanta|qual|quais|quan
 _CONDITIONAL_START = re.compile(r"^(e )?(se|caso|supondo|imagina|imagine|na hipotese)\b")
 _REQUEST_START = re.compile(r"^(por favor )?(voce |voces )?(pode|podem|poderia|poderiam|consegue|conseguem|"
                             r"da pra|da para|quero|queria|gostaria|preciso|solicito|favor)\b")
-_NEGATED = re.compile(r"\b(nao|nunca|jamais) (quero |vou |preciso |precisa |pode |deve )?"
-                      r"(troc|reembols|resgat|reagend|cancel|abrir|abra)|"
-                      r"\b(troca|reembolso|resgate|reagendamento|chamado)\s+nao\b")
+_ACTION_TERM = r"(tro(c|qu)\w*|reembols\w*|estorn\w*|resgat\w*|reagend\w*|abr(ir|a|e)\b|chamado|atendente)"
+# Não é pedido: negação, cancelamento/desistência, relato do passado ou vontade de SABER, até ~25 caracteres
+# antes do termo na mesma cláusula ("não troque", "quero cancelar a troca", "já pedi a troca", "quero saber
+# se posso trocar"), ou negação logo depois dele ("troca não").
+_NEGATED = re.compile(
+    r"\b(nao|nunca|jamais|sem|nem)\b[^,]{0,25}?\b" + _ACTION_TERM
+    + r"|\b(cancel\w*|desist\w*|desfaz\w*|anul\w*|suspend\w*)\b[^,]{0,25}?\b" + _ACTION_TERM
+    + r"|\b(pedi|solicitei|fiz|abri|pedimos|solicitamos|ja tinha)\b[^,]{0,25}?\b" + _ACTION_TERM
+    + r"|\b(saber|entender|pensando|pensei|duvida|interesse|curiosidade|perguntar)\b[^,]{0,25}?\b" + _ACTION_TERM
+    + r"|\b(troca|reembolso|estorno|resgate|reagendamento|chamado|atendente)\s*,?\s*(nao|nunca)\b")
 _POINTS_SWAP = re.compile(r"troc\w*\s+(os\s+|meus\s+|minhas\s+)?pontos")
 
 
