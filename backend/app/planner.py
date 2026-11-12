@@ -25,8 +25,10 @@ PLANNER_RULES = (
     "uma por especialista, na ordem em que precisam acontecer (diagnóstico antes de recomendação; recomendação "
     "antes de efetivar troca; efetivar antes de confirmar entrega/fatura). Use só estes especialistas:\n{catalog}\n"
     "Responda SOMENTE um JSON: {{\"steps\": [{{\"agent\": \"<chave>\", \"task\": \"<o que este especialista deve "
-    "resolver, em uma frase>\"}}]}}. No máximo {max_steps} passos; um especialista aparece uma vez; não crie passo "
-    "para o que o cliente não pediu."
+    "resolver, em uma frase>\"}}]}}. No máximo {max_steps} passos; um especialista aparece uma vez. Inclua SÓ "
+    "especialistas sem os quais o pedido fica sem resposta: nada de passo 'por garantia' (ex.: garantia só se o "
+    "cliente perguntou de garantia/cobertura; suporte só se pediu diagnóstico ou ajuda técnica; confirmação "
+    "de troca é do agente de pedidos, não um passo extra). Cada especialista a mais custa tempo e dinheiro."
 )
 
 

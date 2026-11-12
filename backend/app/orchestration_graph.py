@@ -699,8 +699,9 @@ async def n_agent_hop(state: TurnState, config) -> dict:
     if destination == current or (is_revisit and not revisit_allowed):
         tail.append("O agente de destino está desativado ou já atuou neste turno; mantive a orientação disponível sem criar um handoff circular.")
         return {**update, "tail_notes": tail}
-    if task is None:
-        task = next((s["task"] for s in state.get("plan") or [] if s["agent"] == destination), None)
+    # A tarefa do plano (visão do pedido inteiro, feita pelo orquestrador) vale mais que a da transferência.
+    planned = next((s["task"] for s in state.get("plan") or [] if s["agent"] == destination and s.get("task")), None)
+    task = planned or task
     return await _record_handoff(svc, state, update, current, destination, reason,
                                  task or reason, is_revisit, visit_counts)
 

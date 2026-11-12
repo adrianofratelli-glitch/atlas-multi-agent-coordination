@@ -446,3 +446,21 @@ async def execute(ctx: ToolContext, name: str, args: dict, call_id: str = "") ->
     if spec.effect == "read" and not result.is_error:
         ctx.actions.append({"tool": name, "effect": "read"})
     return result
+
+
+def explicit_write_intents(message: str, tool_names: list[str]) -> list[str]:
+    """Os MESMOS sinais que os portões de escrita usam, ditos ao modelo antes: o servidor sabe que o cliente
+    pediu "troca"; o agente não pode esquecer de efetivar (medido: às vezes só consultava e transferia)."""
+    from .agents import REWARD_CATALOG, _requested_status
+    found = []
+    status = _requested_status(message)
+    if status and "request_order_status_change" in tool_names:
+        found.append(f"request_order_status_change com status '{status}'")
+    reward = next((key for key in REWARD_CATALOG if key in normalize(message)), None)
+    if reward and "redeem_reward" in tool_names:
+        found.append(f"redeem_reward '{reward}'")
+    if _wants(message, RESCHEDULE_TERMS) and "request_delivery_reschedule" in tool_names:
+        found.append("request_delivery_reschedule")
+    if _wants(message, ESCALATION_TERMS) and "open_support_ticket" in tool_names:
+        found.append("open_support_ticket")
+    return found
