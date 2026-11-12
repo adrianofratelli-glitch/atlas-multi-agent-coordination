@@ -546,7 +546,8 @@ def _handoff_targets(state: TurnState, current: str) -> list[str]:
     if state["hop"] >= MAX_HOPS - 1:
         return []
     visits = state["visit_counts"]
-    return [key for key in RUNNERS if key in state["registry"] and key != current and (
+    paused_agent = (state.get("pending_action") or {}).get("agent")
+    return [key for key in RUNNERS if key in state["registry"] and key != current and key != paused_agent and (
         visits.get(key, 0) == 0 or ((current, key) in ALLOWED_REVISITS and visits.get(key, 0) < MAX_VISITS_PER_AGENT))]
 
 
@@ -751,6 +752,11 @@ async def n_agent_hop(state: TurnState, config) -> dict:
             return update
         handoff_to, reason, task = step["agent"], f"plano do turno: {step['task']}", step["task"]
     destination = handoff_to
+    pending_now = update.get("pending_action") or state.get("pending_action")
+    if pending_now and destination == pending_now.get("agent"):
+        # Voltar ao agente cuja escrita está pausada só repetiria o pedido (e seria recusado): a cadeia segue
+        # para a consolidação; a decisão do analista conclui a etapa.
+        return update
     if destination not in registry:
         destination = FALLBACK_AGENTS.get(destination, state["target"])
     visit_counts = dict(state["visit_counts"])
@@ -1077,8 +1083,12 @@ async def _paused_output(service, state: dict) -> ChatResponse:
     O estado inteiro (quadro, caminho, orçamento) fica no checkpoint até a decisão humana."""
     customer, budget, timeline = state["customer"], state["budget"], state["timeline"]
     pending = state["pending_action"]
-    from .consolidate import deterministic
-    response = deterministic(state["board"], state["tail_notes"])
+    from . import consolidate as consolidate_module
+    # A resposta da pausa também é UMA resposta: o que já foi lido (entrega, fatura) + o que aguarda o analista.
+    response, event = await consolidate_module.consolidate(
+        llm=service.llm, budget=budget, orchestrator_doc=state["registry"].get("orchestrator"),
+        message=state["masked"], entries=state["board"], tail=state["tail_notes"])
+    timeline.append(event)
     await service._update_conversation(state["conversation_id"], customer, state["masked"], response,
                                        state["current"], state["handoff_chain"], timeline)
     trace_url = await service._persist_trace(state["conversation_id"], customer, state["masked"], response, timeline,

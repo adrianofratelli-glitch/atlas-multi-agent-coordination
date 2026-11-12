@@ -42,7 +42,9 @@ async def _single(store, llm, customer, message, ctx_base, policies):
     result = await agent_loop.run_tool_agent(
         store=store, llm=llm, budget=budget, agent_key="generalist_agent", agent_doc=GENERALIST, message=message,
         customer=customer, conversation_id="ab-single", turn_context=dict(ctx_base), task=None, board_summary="",
-        detected={}, handoff_targets=[], hitl_policies=policies, simulate_writes=True)
+        detected={}, handoff_targets=[], hitl_policies=policies, simulate_writes=True,
+        # Justiça do A/B: o generalista cobre o pedido inteiro sozinho, então tem o dobro de rodadas.
+        max_rounds=2 * agent_loop.MAX_TOOL_ROUNDS)
     if result is None:
         return {"arm": "single", "available": False}
     events = [result.event, *result.extra_events]

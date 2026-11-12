@@ -99,7 +99,7 @@ async def run_tool_agent(*, store, llm, budget, agent_key: str, agent_doc: dict,
                          detected: dict[str, list[str]], handoff_targets: list[str], hitl_policies: list[dict],
                          extra_hint: str = "", simulate_writes: bool = False, tainted: bool = False,
                          approved_action: dict | None = None, ctx_sink: list | None = None,
-                         hold_writes: bool = False) -> AgentResult | None:
+                         hold_writes: bool = False, max_rounds: int = MAX_TOOL_ROUNDS) -> AgentResult | None:
     if not (tool_calling_enabled() and llm is not None and getattr(llm, "anthropic_client", None) and agent_doc):
         return None
     specs = tools_module.tools_for(agent_doc, agent_key)
@@ -135,7 +135,7 @@ async def run_tool_agent(*, store, llm, budget, agent_key: str, agent_doc: dict,
             "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": "anthropic",
             "gen_ai.agent.name": agent_key, "gen_ai.agent.id": agent_key,
             "gen_ai.conversation.id": conversation_id, "gen_ai.request.model": agent_doc.get("model", "")}):
-        for rounds in range(1, MAX_TOOL_ROUNDS + 1):
+        for rounds in range(1, max_rounds + 1):
             try:
                 response = await llm.complete_tools(agent=agent_for_llm, static_context=TOOL_RULES,
                                                     dynamic_context=dynamic, messages=messages, tools=tool_defs,
