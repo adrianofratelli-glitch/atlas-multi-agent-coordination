@@ -3,7 +3,7 @@
 Nenhum teste fala com o Tavily: `web_search.PROVIDER_CALL` é trocado por um provedor falso que conta chamadas.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -229,10 +229,12 @@ async def test_overdue_shipment_searches_the_carrier_with_a_server_built_query(m
     store = await memory_store(seeded=True)
     result = await run_logistics_agent(store, "cadê o PED-1001? meu cpf é 123.456.789-09", ANA,
                                        context={"web_cfg": CFG})
-    assert result.event.result["delivery_overdue"] is True and result.event.result["days_until_delivery"] == -86
+    # o seed ancora as datas no dia em que roda (aqui, o relógio congelado): PED-1001 venceu há 5 dias
+    assert result.event.result["estimated_delivery"] == (NOW.date() - timedelta(days=5)).isoformat()
+    assert result.event.result["delivery_overdue"] is True and result.event.result["days_until_delivery"] == -5
     assert provider.calls == ["Correios Express atraso entregas Brasil"]       # do documento, nunca do texto do cliente
     assert [e.op for e in result.extra_events] == ["external"]
-    assert "venceu há 86 dia(s)" in result.response and "https://example.com/noticia" in result.response
+    assert "venceu há 5 dia(s)" in result.response and "https://example.com/noticia" in result.response
 
 
 @pytest.mark.parametrize("message,context", [
@@ -252,8 +254,10 @@ async def test_warranty_uses_calendar_months_and_reports_days_left():
     store = await memory_store(seeded=True)
     result = await agents.run_warranty_agent(store, "a garantia do PED-1001 ainda vale?", ANA)
     doc = result.event.result
-    assert doc["purchased_at"] == "2026-07-10" and doc["expires_at"] == "2027-07-10"
-    assert doc["days_left"] == 270 and doc["covered"] is True
+    purchased = NOW.date() - timedelta(days=14)                    # seed relativo ao dia em que roda
+    assert doc["purchased_at"] == purchased.isoformat()
+    assert doc["expires_at"] == purchased.replace(year=purchased.year + 1).isoformat()   # 12 meses de calendário
+    assert doc["days_left"] == 365 - 14 and doc["covered"] is True
 
 
 # ---- taint do turno: depois da web, nenhum agente que escreve roda ----

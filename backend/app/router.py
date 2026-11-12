@@ -60,6 +60,27 @@ def cheap_route(message: str, rules: Iterable[dict]) -> RouteDecision | None:
 FANOUT_ELIGIBLE = ("order_agent", "billing_agent")
 
 
+def matched_agents(message: str, rules: Iterable[dict]) -> dict[str, list[str]]:
+    """Todos os agentes cujas palavras de `routing_rules` aparecem na mensagem, com as palavras.
+
+    Não decide nada: vira dica determinística para o agente ("esta mensagem também fala de fatura")
+    — o modelo decide se transfere, o servidor valida o destino."""
+    text = normalize(message)
+    hits: dict[str, list[str]] = {}
+    for rule in rules:
+        target = rule.get("target_agent")
+        for keyword in rule.get("keywords", []):
+            kw = normalize(str(keyword))
+            if not kw:
+                continue
+            direita = r"(?!\w)" if kw[-1:].isalnum() else ""
+            if re.search(rf"(?<!\w){re.escape(kw)}{direita}", text):
+                hits.setdefault(target, [])
+                if kw not in hits[target]:
+                    hits[target].append(kw)
+    return hits
+
+
 def detect_fanout(message: str, rules: Iterable[dict]) -> list[str] | None:
     """Pattern 'Parallel Fan-Out': pedido composto ('status do pedido e quanto devo') dispara 2 agentes
     independentes ao mesmo tempo em vez de handoff sequencial — só entre agentes cujo trabalho é genuinamente

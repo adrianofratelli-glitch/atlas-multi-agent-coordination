@@ -203,7 +203,7 @@ class OrchestrationService:
         suggestions = await _next_steps(self.store, customer, covered={"order", "invoice"})
         return self._response(budget, conversation_id=conversation_id, response=response, active_agent=current, route_source="fanout", cache_hit=False, cache_source=None, tokens_economizados=0, timeline=timeline, usage=usage, suggestions=suggestions, langfuse_trace_url=trace_url)
 
-    async def _update_conversation(self, conversation_id: str, customer: dict, message: str, response: str, active_agent: str, handoffs: list[dict], timeline: list[TimelineEvent] | None = None) -> None:
+    async def _update_conversation(self, conversation_id: str, customer: dict, message: str | None, response: str, active_agent: str, handoffs: list[dict], timeline: list[TimelineEvent] | None = None) -> None:
         """Aplica só o DELTA deste turno via `update_one` atômico — nunca reescreve o documento inteiro.
 
         Antes disto, o turno lia `agent_conversations` uma única vez no início de `run_turn` e, no
@@ -216,7 +216,9 @@ class OrchestrationService:
         acabam presentes, na ordem em que cada um efetivamente terminou.
         """
         now = utcnow()
-        turn_entries = [{"role": "user", "content": message, "at": now}, {"role": "assistant", "content": response, "at": now}]
+        # message=None: turno retomado após aprovação humana — a mensagem do cliente já foi gravada na pausa.
+        turn_entries = ([{"role": "user", "content": message, "at": now}] if message is not None else []) + [
+            {"role": "assistant", "content": response, "at": now}]
         handoff_entries = [{key: value for key, value in item.items() if key != "conversation_id"} for item in handoffs]
 
         # "pedido/fatura ativo": último order_id/invoice_id que um agente de fato tocou NESTE turno — é

@@ -24,6 +24,14 @@ def issue_token(customer_key: str, settings: Settings) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
+def decode_customer_key(token: str, settings: Settings) -> str:
+    """Single JWT check shared by the HTTP API and the MCP server: signature, expiry and issuer.
+    Raises `jwt.PyJWTError` on any failure; `customer_key` comes only from the verified `sub`."""
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"], issuer=settings.app_name,
+                         options={"require": ["sub", "exp", "iss"]})
+    return payload["sub"]
+
+
 async def current_customer(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -37,15 +45,10 @@ async def current_customer(
             return fallback
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "seed não executado")
     try:
-        payload = jwt.decode(
-            credentials.credentials,
-            settings.jwt_secret,
-            algorithms=["HS256"],
-            issuer=settings.app_name,
-        )
+        customer_key = decode_customer_key(credentials.credentials, settings)
     except jwt.PyJWTError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "token inválido") from exc
-    customer = await store.find_one("customers", {"customer_key": payload["sub"]})
+    customer = await store.find_one("customers", {"customer_key": customer_key})
     if not customer:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "identidade desconhecida")
     return customer

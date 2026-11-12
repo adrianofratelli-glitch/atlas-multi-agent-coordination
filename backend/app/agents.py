@@ -65,10 +65,21 @@ class AgentResult:
     handoff_to: str | None = None
     handoff_reason: str | None = None
     extra_events: list[TimelineEvent] = None
+    # Preenchidos pelo loop de tool calling (agent_loop.py); no caminho determinístico ficam no padrão.
+    mode: str = "deterministic"
+    actions: list[dict] = None
+    pending_action: dict | None = None
+    task_for_next: str | None = None
+    tainted: bool = False
+    touched: dict = None
 
     def __post_init__(self):
         if self.extra_events is None:
             self.extra_events = []
+        if self.actions is None:
+            self.actions = []
+        if self.touched is None:
+            self.touched = {}
 
 
 def extract_id(message: str, prefix: str) -> str | None:
@@ -104,31 +115,28 @@ def _requested_status(message: str) -> str | None:
     return None
 
 
-async def run_order_agent(store: DataStore, message: str, customer: dict, llm=None, budget=None, agent_doc=None, scope_hint: str = "", context: dict | None = None) -> AgentResult:
-    started = perf_counter()
-    explicit_order_id = extract_id(message, "PED")
-    order_id = explicit_order_id or (context or {}).get("active_order_id")
-    order = None
+async def load_order(store: DataStore, customer: dict, order_id: str | None, explicit: bool):
+    """Pedido do titular autenticado: o citado, ou (sem identificador explícito) o mais recente.
+
+    Um PED- citado errado/de outro cliente tem que dar "não encontrei", nunca resolver outro pedido
+    em silêncio (isolamento) — por isso o fallback por "mais recente" só vale sem PED- explícito."""
+    order, query = None, {"owner_customer_key": customer["customer_key"]}
     if order_id:
         query = safe_order_read_filter({"order_id": order_id}, customer["customer_key"])
         order = await store.find_one("orders", query)
-    if not order and not explicit_order_id:
-        # só cai pro "pedido mais recente" quando NÃO havia PED- explícito na mensagem (nem no contexto
-        # ativo da conversa) — um PED- citado errado/de outro cliente tem que dar "não encontrei", nunca
-        # silenciosamente resolver outro pedido (isolamento). Sem PED- nenhum e sem contexto ativo, aí sim
-        # o fallback por "mais recente" é a única opção razoável.
+    if not order and not explicit:
         query = {"owner_customer_key": customer["customer_key"]}
         orders = await store.find_many("orders", query, limit=1, sort=[("order_id", -1)])
         order = orders[0] if orders else None
-    clean = public_document(order)
-    requested_status = _requested_status(message) if clean else None
-    if not clean:
-        # Beco sem saída vira orientação ancorada em dado real: lista os pedidos que
-        # ESTA identidade tem de fato, em vez de mandar o cliente "conferir o número".
-        snapshot = await customer_snapshot(store, customer)
-        response = no_data_reply("order", snapshot, identifier=explicit_order_id)
-        event = TimelineEvent(category="agent", title="Consulta segura de pedido (sem resultado — orientação com os pedidos reais)", agent="order_agent", collection="orders", op="read", filter=query, result=[], duration_ms=(perf_counter() - started) * 1000)
-        return AgentResult(response, event)
+    return public_document(order), query
+
+
+async def change_order_status(store: DataStore, customer: dict, clean: dict, requested_status: str,
+                              conversation_id: str, started: float):
+    """Única escrita de pedido: troca vira operação de domínio (`apply_replacement`); demais status passam por
+    `safe_order_update` (allowlist), numa transação com o registro da decisão.
+
+    Devolve (response, event, extra_events, blocked_by_recurrence, changed)."""
     if requested_status == "troca_solicitada":
         # A troca é uma operação de domínio, não um `$set` qualquer: `apply_replacement`
         # consulta a cadeia de reposições, decide, e só então escreve — tudo num lugar só.
@@ -136,7 +144,7 @@ async def run_order_agent(store: DataStore, message: str, customer: dict, llm=No
         # policies.GUARDED_STATUSES), então nenhum caminho novo escreve isso por engano.
         outcome = await apply_replacement(
             store, clean, customer_key=customer["customer_key"], agent="order_agent",
-            conversation_id=(context or {}).get("conversation_id", ""))
+            conversation_id=conversation_id)
         chain = outcome.chain
         if outcome.blocked_by_recurrence:
             response = (
@@ -148,8 +156,7 @@ async def run_order_agent(store: DataStore, message: str, customer: dict, llm=No
             if outcome.review:
                 response += (f" Abri a análise de qualidade **{outcome.review['review_id']}** e um "
                              "especialista humano decide o encaminhamento.")
-            return AgentResult(response, outcome.events[0], extra_events=outcome.events[1:])
-
+            return response, outcome.events[0], outcome.events[1:], True, False
         clean["status"] = "troca_solicitada"
         response = (f"O pedido {clean['order_id']} de {clean['product']} foi atualizado para "
                     "**troca_solicitada**." if outcome.changed else
@@ -157,6 +164,65 @@ async def run_order_agent(store: DataStore, message: str, customer: dict, llm=No
                     "**troca_solicitada**.")
         event = outcome.events[-1] if outcome.changed else outcome.events[0]
         extra = [item for item in outcome.events if item is not event]
+        return response, event, extra, False, outcome.changed
+    # segue valendo mesmo se o pedido JÁ estava nesse status (ex.: cliente repete o pedido numa
+    # conversa nova): o handoff seguinte não pode depender de uma escrita ter acontecido neste turno.
+    changed = requested_status != clean["status"]
+    query = safe_order_read_filter({"order_id": clean["order_id"]}, customer["customer_key"])
+    if changed:
+        write_query, update = safe_order_update({"order_id": clean["order_id"], "status": requested_status}, customer["customer_key"])
+        previous_status = clean["status"]
+
+        # Mudança de status e registro da decisão numa transação só: se o registro
+        # falhar, o pedido volta ao status anterior. Mundo alterado sem trilha era
+        # justamente o furo que a trilha existe para impedir.
+        async def _write(tx):
+            await store.update_one("orders", write_query, update, session=tx)
+            await record_decision(store, build_decision_doc(
+                action="order_status_change", subject_id=clean["order_id"],
+                customer_key=customer["customer_key"], agent="order_agent",
+                conversation_id=conversation_id,
+                reasoning=f"Cliente pediu explicitamente a mudança para '{requested_status}'.",
+                payload={"from": previous_status, "to": requested_status, "product": clean["product"]},
+            ), session=tx)
+        await run_in_transaction_with_retry(store, _write)
+        clean["status"] = requested_status
+        response = f"O pedido {clean['order_id']} de {clean['product']} foi atualizado para **{requested_status}**."
+        title, op, filter_used = "Atualização segura de status do pedido", "write", write_query
+    else:
+        response = f"O pedido {clean['order_id']} de {clean['product']} já está com status **{clean['status']}**."
+        title, op, filter_used = "Consulta segura de pedido (status já solicitado)", "read", query
+    event = TimelineEvent(category="agent", title=title, agent="order_agent", collection="orders", op=op, filter=filter_used, result=public_document(clean), duration_ms=(perf_counter() - started) * 1000)
+    return response, event, [], False, changed
+
+
+def _order_followup(message: str):
+    normalized = normalize(message)
+    if any(term in normalized for term in ("fatura", "cobranca", "cobrança", "desconto")):
+        return "billing_agent", "cliente quer saber o impacto da troca/reembolso na fatura"
+    if any(term in normalized for term in ("rastreio", "transportadora", "entrega", "rastreamento")):
+        return "logistics_agent", "cliente quer saber o rastreio/transportadora após a troca"
+    return None, None
+
+
+async def run_order_agent(store: DataStore, message: str, customer: dict, llm=None, budget=None, agent_doc=None, scope_hint: str = "", context: dict | None = None) -> AgentResult:
+    started = perf_counter()
+    explicit_order_id = extract_id(message, "PED")
+    order_id = explicit_order_id or (context or {}).get("active_order_id")
+    clean, query = await load_order(store, customer, order_id, bool(explicit_order_id))
+    requested_status = _requested_status(message) if clean else None
+    if not clean:
+        # Beco sem saída vira orientação ancorada em dado real: lista os pedidos que
+        # ESTA identidade tem de fato, em vez de mandar o cliente "conferir o número".
+        snapshot = await customer_snapshot(store, customer)
+        response = no_data_reply("order", snapshot, identifier=explicit_order_id)
+        event = TimelineEvent(category="agent", title="Consulta segura de pedido (sem resultado — orientação com os pedidos reais)", agent="order_agent", collection="orders", op="read", filter=query, result=[], duration_ms=(perf_counter() - started) * 1000)
+        return AgentResult(response, event)
+    if requested_status:
+        response, event, extra, blocked, _ = await change_order_status(
+            store, customer, clean, requested_status, (context or {}).get("conversation_id", ""), started)
+        if blocked:
+            return AgentResult(response, event, extra_events=extra)
         if (context or {}).get("returning_from") == "logistics_agent":
             response = (
                 f"Confirmação final: o pedido {clean['order_id']} de {clean['product']} permanece "
@@ -164,60 +230,8 @@ async def run_order_agent(store: DataStore, message: str, customer: dict, llm=No
             )
             event.title = "Confirmação final do pedido após logística"
             return AgentResult(response, event, extra_events=extra)
-        wants_billing_check = any(term in normalize(message) for term in ("fatura", "cobranca", "cobrança", "desconto"))
-        wants_logistics_check = any(term in normalize(message) for term in ("rastreio", "transportadora", "entrega", "rastreamento"))
-        if wants_billing_check:
-            return AgentResult(response, event, "billing_agent", "cliente quer saber o impacto da troca/reembolso na fatura", extra_events=extra)
-        if wants_logistics_check:
-            return AgentResult(response, event, "logistics_agent", "cliente quer saber o rastreio/transportadora após a troca", extra_events=extra)
-        return AgentResult(response, event, extra_events=extra)
-
-    if requested_status:
-        # segue valendo mesmo se o pedido JÁ estava nesse status (ex.: cliente repete "quero trocar" numa
-        # conversa nova) — o cliente ainda pode estar perguntando o próximo passo (fatura/entrega), então o
-        # handoff não pode depender de uma escrita ter de fato acontecido neste turno específico.
-        changed = requested_status != clean["status"]
-        if changed:
-            write_query, update = safe_order_update({"order_id": clean["order_id"], "status": requested_status}, customer["customer_key"])
-            previous_status = clean["status"]
-            # Mudança de status e registro da decisão numa transação só: se o registro
-            # falhar, o pedido volta ao status anterior. Mundo alterado sem trilha era
-            # justamente o furo que a trilha existe para impedir.
-            async def _write(tx):
-                await store.update_one("orders", write_query, update, session=tx)
-                await record_decision(store, build_decision_doc(
-                    action="order_status_change", subject_id=clean["order_id"],
-                    customer_key=customer["customer_key"], agent="order_agent",
-                    conversation_id=(context or {}).get("conversation_id", ""),
-                    reasoning=f"Cliente pediu explicitamente a mudança para '{requested_status}'.",
-                    payload={"from": previous_status, "to": requested_status, "product": clean["product"]},
-                ), session=tx)
-            await run_in_transaction_with_retry(store, _write)
-            clean["status"] = requested_status
-            response = f"O pedido {clean['order_id']} de {clean['product']} foi atualizado para **{requested_status}**."
-            title = "Atualização segura de status do pedido"
-            op = "write"
-            filter_used = write_query
-        else:
-            response = f"O pedido {clean['order_id']} de {clean['product']} já está com status **{clean['status']}**."
-            title = "Consulta segura de pedido (status já solicitado)"
-            op = "read"
-            filter_used = query
-        event = TimelineEvent(category="agent", title=title, agent="order_agent", collection="orders", op=op, filter=filter_used, result=public_document(clean), duration_ms=(perf_counter() - started) * 1000)
-        if (context or {}).get("returning_from") == "logistics_agent":
-            response = (
-                f"Confirmação final: o pedido {clean['order_id']} de {clean['product']} permanece "
-                f"com status **{clean['status']}** após a consulta logística."
-            )
-            event.title = "Confirmação final do pedido após logística"
-            return AgentResult(response, event)
-        wants_billing_check = any(term in normalize(message) for term in ("fatura", "cobranca", "cobrança", "desconto"))
-        wants_logistics_check = any(term in normalize(message) for term in ("rastreio", "transportadora", "entrega", "rastreamento"))
-        if wants_billing_check:
-            return AgentResult(response, event, "billing_agent", "cliente quer saber o impacto da troca/reembolso na fatura")
-        if wants_logistics_check:
-            return AgentResult(response, event, "logistics_agent", "cliente quer saber o rastreio/transportadora após a troca")
-        return AgentResult(response, event)
+        target, reason = _order_followup(message)
+        return AgentResult(response, event, target, reason, extra_events=extra)
     response = f"O pedido {clean['order_id']} de {clean['product']} está com status **{clean['status']}**."
     trivial = _is_trivial_lookup(message, order_id)
     synthesized = None if trivial else await llm_synthesize(llm, agent_doc, budget, message, clean, "O cliente pode perguntar qualquer coisa sobre este pedido específico (prazo, status, itens, timeline) — "
@@ -384,6 +398,96 @@ REWARD_CATALOG = {
 }
 
 
+async def redeem_reward(store: DataStore, customer: dict, clean: dict, query: dict, reward_key: str,
+                        conversation_id: str, started: float):
+    """Resgate real (escrita restrita a `$inc` de pontos + comprovante + decisão, uma transação).
+    Devolve (response, event)."""
+    # resgate real: escrita restrita a $inc de pontos (nunca um valor arbitrário do modelo) + registro em
+    # redemptions — mesmo padrão de segurança do order_agent (filtro reconstruído, campo aprovado só).
+    label, cost = REWARD_CATALOG[reward_key]
+    # Idempotência: um retry de rede no /api/chat (timeout do cliente, reenvio automático) reprocessa a
+    # mesma intenção do zero. Sem esta checagem, um resgate idêntico dentro de uma janela curta debitaria
+    # os pontos duas vezes — diferente da mudança de status do order_agent, que já é idempotente por
+    # construção comparando o status desejado com o atual. Aqui não há "status atual" para comparar: o
+    # sinal de "isso já aconteceu" é um resgate recente do MESMO cliente para a MESMA recompensa, no
+    # mesmo espírito de `open_review` (idempotente por subject_id+action+status).
+    recent_cutoff = utcnow() - timedelta(seconds=REDEMPTION_IDEMPOTENCY_WINDOW_SECONDS)
+    recent_redemptions = await store.find_many(
+        "redemptions",
+        {"customer_key": customer["customer_key"], "reward": label, "status": "confirmado"},
+        limit=5, sort=[("at", -1)],
+    )
+    duplicate = next((item for item in recent_redemptions if item.get("at") and as_aware(item["at"]) >= recent_cutoff), None)
+    if duplicate:
+        response = (
+            f"Resgate confirmado: **{label}**, {duplicate['points_spent']} pontos debitados "
+            f"(pedido de resgate idêntico já processado há poucos segundos — não debitei de novo)."
+        )
+        event = TimelineEvent(category="agent", title="Resgate de fidelidade (idempotência: repetição recente ignorada)", agent="loyalty_agent", collection="redemptions", op="read", filter=query, result=public_document(duplicate), duration_ms=(perf_counter() - started) * 1000)
+        return response, event
+    if clean["points"] < cost:
+        faltam = cost - clean["points"]
+        acessiveis = [f"**{lbl}** ({price} pontos)" for lbl, price in sorted(REWARD_CATALOG.values(), key=lambda item: item[1]) if clean["points"] >= price]
+        alternativa = (" Com o saldo atual você já consegue: " + ", ".join(acessiveis) + "."
+                       if acessiveis else " Assim que o saldo subir, eu processo o resgate na hora.")
+        response = (f"Você tem {clean['points']} pontos e {label} custa {cost} — faltam {faltam} pontos."
+                    + alternativa)
+        await record_decision(store, build_decision_doc(
+            action="loyalty_redemption_denied", subject_id=customer["customer_key"],
+            customer_key=customer["customer_key"], agent="loyalty_agent",
+            conversation_id=conversation_id,
+            reasoning=f"Saldo de {clean['points']} pontos é insuficiente para '{label}' ({cost} pontos).",
+            risk_factors=["saldo_insuficiente"],
+            payload={"reward": label, "cost": cost, "balance": clean["points"]},
+        ), severity="warning")
+        event = TimelineEvent(category="agent", title="Resgate de fidelidade negado (saldo insuficiente)", agent="loyalty_agent", collection="loyalty_accounts", op="read", filter=query, result=clean, duration_ms=(perf_counter() - started) * 1000)
+        return response, event
+    redemption = {"redemption_id": f"RDM-{customer['customer_key'].upper()}-{int(started)}", "customer_key": customer["customer_key"], "reward": label, "points_spent": cost, "status": "confirmado", "at": utcnow()}
+    # Três escritas, uma transação: débito dos pontos, comprovante e decisão. É a mais
+    # crítica das quatro — um débito sem comprovante é saldo que sumiu sem explicação.
+    #
+    # Duplo clique REAL (medido no Atlas, banco *_test): a checagem de repetição acima roda fora
+    # da transação, então três requisições em voo liam "nenhum resgate recente" juntas e brigavam
+    # pelo mesmo `loyalty_accounts` até estourar o retry de WriteConflict (HTTP 500). Por isso a
+    # checagem se repete DENTRO da transação: o WriteConflict serializa os concorrentes, e quem
+    # repete enxerga o resgate já confirmado e devolve o mesmo comprovante sem debitar. O débito
+    # ainda exige saldo no próprio filtro (`points >= cost`), então nunca fica negativo.
+    async def _write(tx):
+        repeated = await store.find_one("redemptions", {
+            "customer_key": customer["customer_key"], "reward": label, "status": "confirmado",
+            "at": {"$gte": recent_cutoff}}, session=tx)
+        if repeated:
+            return repeated
+        debited = await store.update_one("loyalty_accounts", {**query, "points": {"$gte": cost}},
+                                         {"$inc": {"points": -cost}}, session=tx)
+        if not debited:
+            return "insufficient"
+        await store.insert_one("redemptions", redemption, session=tx)
+        await record_decision(store, build_decision_doc(
+            action="loyalty_redemption", subject_id=redemption["redemption_id"],
+            customer_key=customer["customer_key"], agent="loyalty_agent",
+            conversation_id=conversation_id,
+            reasoning=f"Saldo de {clean['points']} pontos cobre o custo de {cost} de '{label}'.",
+            payload={"reward": label, "points_spent": cost, "balance_after": clean["points"] - cost},
+        ), session=tx)
+        return None
+    outcome = await run_in_transaction_with_retry(store, _write, max_attempts=6)
+    if isinstance(outcome, dict):
+        response = (
+            f"Resgate confirmado: **{label}**, {outcome['points_spent']} pontos debitados "
+            f"(pedido de resgate idêntico já processado há poucos segundos — não debitei de novo)."
+        )
+        event = TimelineEvent(category="agent", title="Resgate de fidelidade (idempotência: repetição concorrente ignorada)", agent="loyalty_agent", collection="redemptions", op="read", filter=query, result=public_document(outcome), duration_ms=(perf_counter() - started) * 1000)
+        return response, event
+    if outcome == "insufficient":
+        response = f"O saldo mudou durante o pedido e não cobre mais {label} ({cost} pontos); nada foi debitado."
+        event = TimelineEvent(category="agent", title="Resgate de fidelidade não efetivado (saldo mudou)", agent="loyalty_agent", collection="loyalty_accounts", op="read", filter=query, result={}, duration_ms=(perf_counter() - started) * 1000)
+        return response, event
+    response = f"Resgate confirmado: **{label}**, {cost} pontos debitados. Saldo restante: {clean['points'] - cost} pontos."
+    event = TimelineEvent(category="agent", title="Resgate de fidelidade confirmado", agent="loyalty_agent", collection="redemptions", op="write", filter=query, result=redemption, duration_ms=(perf_counter() - started) * 1000)
+    return response, event
+
+
 async def run_loyalty_agent(store: DataStore, message: str, customer: dict, llm=None, budget=None, agent_doc=None, scope_hint: str = "", context: dict | None = None) -> AgentResult:
     started = perf_counter()
     query = {"customer_key": customer["customer_key"]}
@@ -418,89 +522,8 @@ async def run_loyalty_agent(store: DataStore, message: str, customer: dict, llm=
         event = TimelineEvent(category="agent", title="Resgate fora da tabela de recompensas (catálogo real apresentado)", agent="loyalty_agent", collection="loyalty_accounts", op="read", filter=query, result=clean, duration_ms=(perf_counter() - started) * 1000)
         return AgentResult(response, event)
     if reward_key:
-        # resgate real: escrita restrita a $inc de pontos (nunca um valor arbitrário do modelo) + registro em
-        # redemptions — mesmo padrão de segurança do order_agent (filtro reconstruído, campo aprovado só).
-        label, cost = REWARD_CATALOG[reward_key]
-        # Idempotência: um retry de rede no /api/chat (timeout do cliente, reenvio automático) reprocessa a
-        # mesma intenção do zero. Sem esta checagem, um resgate idêntico dentro de uma janela curta debitaria
-        # os pontos duas vezes — diferente da mudança de status do order_agent, que já é idempotente por
-        # construção comparando o status desejado com o atual. Aqui não há "status atual" para comparar: o
-        # sinal de "isso já aconteceu" é um resgate recente do MESMO cliente para a MESMA recompensa, no
-        # mesmo espírito de `open_review` (idempotente por subject_id+action+status).
-        recent_cutoff = utcnow() - timedelta(seconds=REDEMPTION_IDEMPOTENCY_WINDOW_SECONDS)
-        recent_redemptions = await store.find_many(
-            "redemptions",
-            {"customer_key": customer["customer_key"], "reward": label, "status": "confirmado"},
-            limit=5, sort=[("at", -1)],
-        )
-        duplicate = next((item for item in recent_redemptions if item.get("at") and as_aware(item["at"]) >= recent_cutoff), None)
-        if duplicate:
-            response = (
-                f"Resgate confirmado: **{label}**, {duplicate['points_spent']} pontos debitados "
-                f"(pedido de resgate idêntico já processado há poucos segundos — não debitei de novo)."
-            )
-            event = TimelineEvent(category="agent", title="Resgate de fidelidade (idempotência: repetição recente ignorada)", agent="loyalty_agent", collection="redemptions", op="read", filter=query, result=public_document(duplicate), duration_ms=(perf_counter() - started) * 1000)
-            return AgentResult(response, event)
-        if clean["points"] < cost:
-            faltam = cost - clean["points"]
-            acessiveis = [f"**{lbl}** ({price} pontos)" for lbl, price in sorted(REWARD_CATALOG.values(), key=lambda item: item[1]) if clean["points"] >= price]
-            alternativa = (" Com o saldo atual você já consegue: " + ", ".join(acessiveis) + "."
-                           if acessiveis else " Assim que o saldo subir, eu processo o resgate na hora.")
-            response = (f"Você tem {clean['points']} pontos e {label} custa {cost} — faltam {faltam} pontos."
-                        + alternativa)
-            await record_decision(store, build_decision_doc(
-                action="loyalty_redemption_denied", subject_id=customer["customer_key"],
-                customer_key=customer["customer_key"], agent="loyalty_agent",
-                conversation_id=(context or {}).get("conversation_id", ""),
-                reasoning=f"Saldo de {clean['points']} pontos é insuficiente para '{label}' ({cost} pontos).",
-                risk_factors=["saldo_insuficiente"],
-                payload={"reward": label, "cost": cost, "balance": clean["points"]},
-            ), severity="warning")
-            event = TimelineEvent(category="agent", title="Resgate de fidelidade negado (saldo insuficiente)", agent="loyalty_agent", collection="loyalty_accounts", op="read", filter=query, result=clean, duration_ms=(perf_counter() - started) * 1000)
-            return AgentResult(response, event)
-        redemption = {"redemption_id": f"RDM-{customer['customer_key'].upper()}-{int(started)}", "customer_key": customer["customer_key"], "reward": label, "points_spent": cost, "status": "confirmado", "at": utcnow()}
-        # Três escritas, uma transação: débito dos pontos, comprovante e decisão. É a mais
-        # crítica das quatro — um débito sem comprovante é saldo que sumiu sem explicação.
-        #
-        # Duplo clique REAL (medido no Atlas, banco *_test): a checagem de repetição acima roda fora
-        # da transação, então três requisições em voo liam "nenhum resgate recente" juntas e brigavam
-        # pelo mesmo `loyalty_accounts` até estourar o retry de WriteConflict (HTTP 500). Por isso a
-        # checagem se repete DENTRO da transação: o WriteConflict serializa os concorrentes, e quem
-        # repete enxerga o resgate já confirmado e devolve o mesmo comprovante sem debitar. O débito
-        # ainda exige saldo no próprio filtro (`points >= cost`), então nunca fica negativo.
-        async def _write(tx):
-            repeated = await store.find_one("redemptions", {
-                "customer_key": customer["customer_key"], "reward": label, "status": "confirmado",
-                "at": {"$gte": recent_cutoff}}, session=tx)
-            if repeated:
-                return repeated
-            debited = await store.update_one("loyalty_accounts", {**query, "points": {"$gte": cost}},
-                                             {"$inc": {"points": -cost}}, session=tx)
-            if not debited:
-                return "insufficient"
-            await store.insert_one("redemptions", redemption, session=tx)
-            await record_decision(store, build_decision_doc(
-                action="loyalty_redemption", subject_id=redemption["redemption_id"],
-                customer_key=customer["customer_key"], agent="loyalty_agent",
-                conversation_id=(context or {}).get("conversation_id", ""),
-                reasoning=f"Saldo de {clean['points']} pontos cobre o custo de {cost} de '{label}'.",
-                payload={"reward": label, "points_spent": cost, "balance_after": clean["points"] - cost},
-            ), session=tx)
-            return None
-        outcome = await run_in_transaction_with_retry(store, _write, max_attempts=6)
-        if isinstance(outcome, dict):
-            response = (
-                f"Resgate confirmado: **{label}**, {outcome['points_spent']} pontos debitados "
-                f"(pedido de resgate idêntico já processado há poucos segundos — não debitei de novo)."
-            )
-            event = TimelineEvent(category="agent", title="Resgate de fidelidade (idempotência: repetição concorrente ignorada)", agent="loyalty_agent", collection="redemptions", op="read", filter=query, result=public_document(outcome), duration_ms=(perf_counter() - started) * 1000)
-            return AgentResult(response, event)
-        if outcome == "insufficient":
-            response = f"O saldo mudou durante o pedido e não cobre mais {label} ({cost} pontos); nada foi debitado."
-            event = TimelineEvent(category="agent", title="Resgate de fidelidade não efetivado (saldo mudou)", agent="loyalty_agent", collection="loyalty_accounts", op="read", filter=query, result={}, duration_ms=(perf_counter() - started) * 1000)
-            return AgentResult(response, event)
-        response = f"Resgate confirmado: **{label}**, {cost} pontos debitados. Saldo restante: {clean['points'] - cost} pontos."
-        event = TimelineEvent(category="agent", title="Resgate de fidelidade confirmado", agent="loyalty_agent", collection="redemptions", op="write", filter=query, result=redemption, duration_ms=(perf_counter() - started) * 1000)
+        response, event = await redeem_reward(store, customer, clean, query, reward_key,
+                                              (context or {}).get("conversation_id", ""), started)
         return AgentResult(response, event)
 
     benefits = ", ".join(clean["tier_benefits"]) if clean["tier_benefits"] else "nenhum benefício adicional no tier atual"
@@ -515,15 +538,13 @@ async def run_loyalty_agent(store: DataStore, message: str, customer: dict, llm=
     return AgentResult(synthesized or response, event)
 
 
-async def run_logistics_agent(store: DataStore, message: str, customer: dict, llm=None, budget=None, agent_doc=None, scope_hint: str = "", context: dict | None = None) -> AgentResult:
-    started = perf_counter()
-    explicit_order_id = extract_id(message, "PED")
-    order_id = explicit_order_id or (context or {}).get("active_order_id")
-    shipment = None
+async def load_shipment(store: DataStore, customer: dict, order_id: str | None, explicit: bool):
+    """Entrega do titular; com a conta de prazo feita em Python (nunca pelo modelo)."""
+    shipment, query = None, {"owner_customer_key": customer["customer_key"]}
     if order_id:
         query = safe_shipment_filter({"order_id": order_id}, customer["customer_key"])
         shipment = await store.find_one("shipments", query)
-    if not shipment and not explicit_order_id:
+    if not shipment and not explicit:
         query = {"owner_customer_key": customer["customer_key"]}
         shipments = await store.find_many("shipments", query, limit=1, sort=[("estimated_delivery", -1)])
         shipment = shipments[0] if shipments else None
@@ -533,6 +554,42 @@ async def run_logistics_agent(store: DataStore, message: str, customer: dict, ll
         days = days_from_today(clean.get("estimated_delivery"))
         if days is not None:
             clean = {**clean, "days_until_delivery": days, "delivery_overdue": days < 0}
+    return clean, query
+
+
+async def request_reschedule(store: DataStore, customer: dict, clean: dict, query: dict,
+                             conversation_id: str, started: float):
+    """Escrita restrita: só a sinalização `reschedule_requested` (quem confirma a data é a transportadora)."""
+    async def _write(tx):
+        await store.update_one("shipments", query, {"$set": {"reschedule_requested": True}}, session=tx)
+        await record_decision(store, build_decision_doc(
+            action="shipment_reschedule", subject_id=clean.get("order_id", ""),
+            customer_key=customer["customer_key"], agent="logistics_agent",
+            conversation_id=conversation_id,
+            reasoning="Cliente pediu reagendamento da entrega.",
+            payload={"carrier": clean.get("carrier"), "tracking_code": clean.get("tracking_code")},
+        ), session=tx)
+    await run_in_transaction_with_retry(store, _write)
+    response = f"Reagendamento solicitado para o pedido {clean['order_id']}. A transportadora **{clean['carrier']}** vai confirmar uma nova janela de entrega em até 24h."
+    event = TimelineEvent(category="agent", title="Reagendamento de entrega solicitado", agent="logistics_agent", collection="shipments", op="write", filter=query, result={**clean, "reschedule_requested": True}, duration_ms=(perf_counter() - started) * 1000)
+    return response, event
+
+
+async def carrier_news(store: DataStore, customer: dict, clean: dict, web_cfg: dict | None):
+    """Busca web (ADR-005): só com previsão vencida + ferramenta ligada; consulta montada do documento."""
+    if not (clean.get("delivery_overdue") and web_cfg and clean.get("carrier")):
+        return "", []
+    web_text, web_event = await web_search.search(
+        store, web_search.carrier_query(clean["carrier"]), area=customer["area"],
+        customer_key=customer["customer_key"], agent="logistics_agent", cfg=web_cfg)
+    return web_text, [web_event]
+
+
+async def run_logistics_agent(store: DataStore, message: str, customer: dict, llm=None, budget=None, agent_doc=None, scope_hint: str = "", context: dict | None = None) -> AgentResult:
+    started = perf_counter()
+    explicit_order_id = extract_id(message, "PED")
+    order_id = explicit_order_id or (context or {}).get("active_order_id")
+    clean, query = await load_shipment(store, customer, order_id, bool(explicit_order_id))
     if not clean:
         snapshot = await customer_snapshot(store, customer)
         response = no_data_reply("shipment", snapshot, identifier=explicit_order_id)
@@ -556,18 +613,8 @@ async def run_logistics_agent(store: DataStore, message: str, customer: dict, ll
     if wants_reschedule and clean["current_location"] != "Entregue":
         # escrita restrita: só um campo de sinalização, nunca a transportadora/prazo real — quem confirma
         # a nova data é a transportadora, o sistema só registra o pedido de reagendamento.
-        async def _write(tx):
-            await store.update_one("shipments", query, {"$set": {"reschedule_requested": True}}, session=tx)
-            await record_decision(store, build_decision_doc(
-                action="shipment_reschedule", subject_id=clean.get("order_id", ""),
-                customer_key=customer["customer_key"], agent="logistics_agent",
-                conversation_id=(context or {}).get("conversation_id", ""),
-                reasoning="Cliente pediu reagendamento da entrega.",
-                payload={"carrier": clean.get("carrier"), "tracking_code": clean.get("tracking_code")},
-            ), session=tx)
-        await run_in_transaction_with_retry(store, _write)
-        response = f"Reagendamento solicitado para o pedido {clean['order_id']}. A transportadora **{clean['carrier']}** vai confirmar uma nova janela de entrega em até 24h."
-        event = TimelineEvent(category="agent", title="Reagendamento de entrega solicitado", agent="logistics_agent", collection="shipments", op="write", filter=query, result={**clean, "reschedule_requested": True}, duration_ms=(perf_counter() - started) * 1000)
+        response, event = await request_reschedule(store, customer, clean, query,
+                                                   (context or {}).get("conversation_id", ""), started)
         if wants_final_order_confirmation and order_already_ran:
             return AgentResult(response, event, "order_agent", "cliente pediu confirmação final do pedido após a etapa logística")
         return AgentResult(response, event)
@@ -578,14 +625,9 @@ async def run_logistics_agent(store: DataStore, message: str, customer: dict, ll
                      "à transportadora.")
     # Busca web (ADR-005): decidida pelo SERVIDOR (previsão vencida, fato calculado acima + ferramenta ligada para a
     # área no tool_registry) e com consulta montada do documento — o texto do cliente não sai do processo.
-    web_events, web_text = [], ""
-    web_cfg = (context or {}).get("web_cfg")
-    if clean.get("delivery_overdue") and web_cfg and clean.get("carrier"):
-        web_text, web_event = await web_search.search(
-            store, web_search.carrier_query(clean["carrier"]), area=customer["area"],
-            customer_key=customer["customer_key"], agent="logistics_agent", cfg=web_cfg)
-        web_events.append(web_event)
-        sources = (web_event.result or {}).get("sources") or []
+    web_text, web_events = await carrier_news(store, customer, clean, (context or {}).get("web_cfg"))
+    if web_events:
+        sources = (web_events[0].result or {}).get("sources") or []
         if sources:
             response += f" Notícias recentes sobre a {clean['carrier']}: {sources[0]}"
     trivial = _is_trivial_lookup(message, order_id) and not web_text
@@ -872,6 +914,41 @@ def _kb_events(found: KbSearch, message: str, clean: list[dict], synthesized: bo
 KB_LIMIT_FOR_EVENT = 4
 
 
+async def open_support_ticket(store: DataStore, customer: dict, subject: str, conversation_id: str,
+                              started: float):
+    """Um chamado humano por conversa (id derivado da conversa = `_id`: idempotente sob duplo clique).
+    Devolve (existing_or_None, ticket)."""
+    import hashlib
+    suffix = (hashlib.sha256(f"{customer['customer_key']}:{conversation_id}".encode()).hexdigest()[:8].upper()
+              if conversation_id else str(int(started * 1000) % 100000))
+    ticket_id = f"TCK-{customer['customer_key'].upper()}-{suffix}"
+    ticket = {"_id": ticket_id, "ticket_id": ticket_id, "customer_key": customer["customer_key"], "area": customer["area"],
+              "conversation_id": conversation_id, "subject": subject[:200], "status": "aberto", "created_at": utcnow()}
+
+    async def _write(tx):
+        existing = await store.find_one("support_tickets", {"ticket_id": ticket_id, "customer_key": customer["customer_key"]}, session=tx)
+        if existing:
+            return existing
+        await store.insert_one("support_tickets", ticket, session=tx)
+        await record_decision(store, build_decision_doc(
+            action="support_ticket_open", subject_id=ticket["ticket_id"],
+            customer_key=customer["customer_key"], agent="support_agent",
+            conversation_id=conversation_id,
+            reasoning="Cliente pediu explicitamente atendimento humano.",
+            payload={"subject": ticket["subject"], "area": ticket["area"]},
+        ), severity="warning", session=tx)
+        return None
+    try:
+        existing = await run_in_transaction_with_retry(store, _write, max_attempts=6)
+    except Exception as exc:  # noqa: BLE001 — só a colisão de _id vira "já aberto"; o resto sobe
+        if getattr(exc, "code", None) != 11000:
+            raise
+        existing = await store.find_one("support_tickets", {"ticket_id": ticket_id, "customer_key": customer["customer_key"]})
+        if not existing:
+            raise
+    return existing, ticket
+
+
 async def run_support_agent(store: DataStore, message: str, customer: dict, llm=None, budget=None, agent_doc=None, scope_hint: str = "", context: dict | None = None) -> AgentResult:
     started = perf_counter()
     found = await search_kb_explained(store, message, agent_doc=agent_doc, local_rank=_local_rank)
@@ -906,35 +983,8 @@ async def run_support_agent(store: DataStore, message: str, customer: dict, llm=
         # chamados). Agora o id é derivado da conversa e o `_id` do documento É esse id: duas
         # transações concorrentes colidem no mesmo `_id` (WriteConflict → retry), e quem repete
         # encontra o chamado já aberto e o devolve em vez de criar outro.
-        import hashlib
-        conversation_id = (context or {}).get("conversation_id", "")
-        suffix = (hashlib.sha256(f"{customer['customer_key']}:{conversation_id}".encode()).hexdigest()[:8].upper()
-                  if conversation_id else str(int(started * 1000) % 100000))
-        ticket_id = f"TCK-{customer['customer_key'].upper()}-{suffix}"
-        ticket = {"_id": ticket_id, "ticket_id": ticket_id, "customer_key": customer["customer_key"], "area": customer["area"],
-                  "conversation_id": conversation_id, "subject": message[:200], "status": "aberto", "created_at": utcnow()}
-
-        async def _write(tx):
-            existing = await store.find_one("support_tickets", {"ticket_id": ticket_id, "customer_key": customer["customer_key"]}, session=tx)
-            if existing:
-                return existing
-            await store.insert_one("support_tickets", ticket, session=tx)
-            await record_decision(store, build_decision_doc(
-                action="support_ticket_open", subject_id=ticket["ticket_id"],
-                customer_key=customer["customer_key"], agent="support_agent",
-                conversation_id=conversation_id,
-                reasoning="Cliente pediu explicitamente atendimento humano.",
-                payload={"subject": ticket["subject"], "area": ticket["area"]},
-            ), severity="warning", session=tx)
-            return None
-        try:
-            existing = await run_in_transaction_with_retry(store, _write, max_attempts=6)
-        except Exception as exc:  # noqa: BLE001 — só a colisão de _id vira "já aberto"; o resto sobe
-            if getattr(exc, "code", None) != 11000:
-                raise
-            existing = await store.find_one("support_tickets", {"ticket_id": ticket_id, "customer_key": customer["customer_key"]})
-            if not existing:
-                raise
+        existing, ticket = await open_support_ticket(store, customer, message, (context or {}).get("conversation_id", ""), started)
+        ticket_id = ticket["ticket_id"]
         if existing:
             final_response += f"\n\nO chamado **{ticket_id}** já está aberto para esta conversa — nosso time entra em contato em até 24h."
             extra_events.append(TimelineEvent(category="agent", title="Chamado de suporte já aberto (idempotência)", agent="support_agent", collection="support_tickets", op="read", result=public_document(existing)))

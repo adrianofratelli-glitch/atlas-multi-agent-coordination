@@ -2,6 +2,7 @@
 
 - Status: aceito
 - Data: 2026-10-13
+- Atualizado em 2026-11-12: as datas de negócio do seed passaram a ser relativas ao dia do seed/reset (`backend/app/seed_data.py::build_shipments`). O PED-1001 nasce com a previsão vencida há 5 dias (não mais 86 ou 116); a decisão deste ADR não muda.
 - Relacionado: [ADR-004](ADR-004-escopo-por-embedding-e-medicao-por-situacoes.md) (fora de escopo por embedding, 0 tokens — **não muda**), [ADR-002](ADR-002-memoria-llm-e-turno-pessoal.md) (turno pessoal fora do cache), [ADR-001](ADR-001-arquitetura-multi-agente.md)
 
 ## Contexto

@@ -16,5 +16,8 @@ langfuse>=2.0.0,<3
 langgraph>=1,<2
 langgraph-checkpoint-mongodb>=0.5.1,<1
 
+# Servidor MCP somente leitura (backend/mcp_server.py): API v2 (MCPServer, Client in-process).
+mcp>=2.3,<3
+
 # Pisos de segurança para dependências transitivas.
 urllib3>=2.8,<3

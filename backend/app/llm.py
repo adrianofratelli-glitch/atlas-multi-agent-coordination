@@ -1,4 +1,5 @@
 import asyncio
+import json
 from time import monotonic
 
 import anthropic
@@ -153,15 +154,72 @@ class LLMGateway:
 
     async def complete(self, *, agent: dict, user_message: str, dynamic_context: str,
                        budget: TurnBudget, static_context: str = "") -> tuple[str | None, dict[str, int]]:
-        import httpx
-        from .economics import call_cost
         if not self.client:
             return None, {"input_tokens": 0, "output_tokens": 0}
         system_static = agent["persona"] + (f"\n\n{static_context}" if static_context else "")
         estimated = estimate_tokens(system_static + user_message + dynamic_context)
+
+        async def request(model, max_tokens):
+            return await self._request(model, system_static, dynamic_context, user_message, max_tokens,
+                                       agent.get("temperature"))
+
+        result = await self._with_policy(agent, budget, estimated, request, openai_ok=True)
+        if result is None:
+            return None, {"input_tokens": 0, "output_tokens": 0}
+        text, counts = result
+        return text, counts
+
+    async def complete_tools(self, *, agent: dict, static_context: str, dynamic_context: str,
+                             messages: list[dict], tools: list[dict], budget: TurnBudget):
+        """Uma rodada de tool use (Anthropic Messages API). Devolve a `Message` do provedor ou None.
+
+        Mesma política de `complete` (retry, fallback de modelo, breaker por endpoint, orçamento e
+        contabilidade por tentativa). Só a rota Anthropic tem tool use aqui: modelo da rota
+        OpenAI-compatible devolve None e o agente cai no caminho determinístico. O gateway Grove
+        recusa `tool_choice` "any"/"tool" — por isso o padrão `auto` (não enviado)."""
+        if not self.anthropic_client:
+            return None
+        system_static = agent["persona"] + (f"\n\n{static_context}" if static_context else "")
+        estimated = estimate_tokens(system_static + dynamic_context + json.dumps(messages, default=str)
+                                    + json.dumps(tools))
+
+        async def request(model, max_tokens):
+            await chaos.hook("llm", name=model, phase="before_first_token")
+            params = dict(
+                model=model, max_tokens=max_tokens, tools=tools, messages=messages,
+                system=[{"type": "text", "text": system_static, "cache_control": {"type": "ephemeral"}},
+                        *([{"type": "text", "text": dynamic_context}] if dynamic_context.strip() else [])],
+            )
+            if agent.get("temperature") is not None:
+                params["temperature"] = agent["temperature"]
+            try:
+                response = await self.anthropic_client.messages.create(**params)
+            except anthropic.BadRequestError as exc:
+                if "temperature" not in params or "temperature" not in str(exc).lower():
+                    raise
+                params.pop("temperature")
+                response = await self.anthropic_client.messages.create(**params)
+            await chaos.hook("llm", name=model, phase="mid_stream")
+            usage = response.usage
+            counts = {"input_tokens": int(usage.input_tokens), "output_tokens": int(usage.output_tokens),
+                      "cache_read_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+                      "cache_write_tokens": int(getattr(usage, "cache_creation_input_tokens", 0) or 0)}
+            usable = response.stop_reason in ("end_turn", "tool_use") and bool(response.content)
+            return (response if usable else None), counts, True
+
+        result = await self._with_policy(agent, budget, estimated, request, openai_ok=False)
+        return result[0] if result else None
+
+    async def _with_policy(self, agent: dict, budget: TurnBudget, estimated: int, request, *, openai_ok: bool):
+        """Retry/fallback/breaker/orçamento comuns. `request(model, max_tokens)` devolve
+        (payload ou None, counts, usage_known). Devolve (payload, counts) ou None."""
+        import httpx
+        from .economics import call_cost
         models = list(dict.fromkeys([agent["model"], agent.get("fallback_model") or agent["model"]]))
         for model in models:
             protocol = "openai" if model in self.settings.grove_openai_models else "anthropic"
+            if protocol == "openai" and not openai_ok:
+                continue
             endpoint = self.settings.grove_chat_completions_url if protocol == "openai" else (
                 self.settings.grove_anthropic_base_url or self.settings.anthropic_base_url or "https://api.anthropic.com")
             breaker = _circuits.setdefault(endpoint, _CircuitBreaker())
@@ -191,15 +249,17 @@ class LLMGateway:
                 if blended:
                     record["blended_usd_per_million"] = self.settings.llm_blended_prices[model]
                 retry = False
-                span_attrs = {"llm.model": model, "llm.protocol": protocol,
+                # Atributos no formato das convenções semânticas GenAI do OpenTelemetry (inference span).
+                span_attrs = {"gen_ai.operation.name": "chat", "gen_ai.request.model": model,
+                              "gen_ai.provider.name": "anthropic" if protocol == "anthropic" else "openai",
+                              "gen_ai.agent.name": agent["agent_key"],
+                              "llm.model": model, "llm.protocol": protocol,
                               "agent": agent["agent_key"], "llm.attempt": attempt + 1}
-                with observability.span("llm.call", **span_attrs) as current_span:
+                with observability.span(f"chat {model}", **span_attrs) as current_span:
                     try:
-                        text, counts, known = await self._request(
-                            model, system_static, dynamic_context, user_message,
-                            min(agent.get("max_output_tokens") or agent["max_turn_tokens"], remaining - estimated),
-                            agent.get("temperature"))
-                        record.update(counts, usage_known=known, status="ok" if text else "incomplete")
+                        payload, counts, known = await request(
+                            model, min(agent.get("max_output_tokens") or agent["max_turn_tokens"], remaining - estimated))
+                        record.update(counts, usage_known=known, status="ok" if payload else "incomplete")
                         # Incomplete responses still carry billable usage.
                         record["estimated_cost_usd"] = call_cost({**record, "status": "ok"}, self.settings.llm_prices, self.settings.llm_blended_prices)
                         actual = sum(counts.values())
@@ -207,9 +267,9 @@ class LLMGateway:
                         budget.cache_read_tokens += counts["cache_read_tokens"]
                         budget.cache_write_tokens += counts["cache_write_tokens"]
                         observability.record_llm_usage(current_span, record)
-                        if text:
+                        if payload:
                             await breaker.record_success()
-                            return text, counts
+                            return payload, counts
                     except (anthropic.APIError, httpx.HTTPError, chaos.ChaosProviderError,
                             RuntimeError, ValueError, KeyError, IndexError) as exc:
                         # No error messages/bodies: providers can echo sensitive payloads.
@@ -232,4 +292,4 @@ class LLMGateway:
                 if not retry or attempt == 2:
                     break
                 await asyncio.sleep(.25 * (2 ** attempt))
-        return None, {"input_tokens": 0, "output_tokens": 0}
+        return None

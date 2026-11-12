@@ -1,5 +1,6 @@
-from datetime import timedelta
+from datetime import date, timedelta
 
+from . import clock
 from .database import utcnow
 
 
@@ -10,28 +11,44 @@ CUSTOMERS = [
     {"customer_key": "diego", "name": "Diego Melo", "area": "financeiro", "plan": "essencial"},
 ]
 
-ORDERS = [
-    {"order_id": "PED-1001", "owner_customer_key": "ana", "product": "Fone Pulse X", "status": "enviado", "timeline": [{"status": "criado", "at": "2026-07-10"}, {"status": "enviado", "at": "2026-07-14"}]},
-    {"order_id": "PED-1002", "owner_customer_key": "ana", "product": "Teclado Air", "status": "troca_solicitada", "replacement_order_id": "PED-1012", "replacement_reason": "tecla travando", "timeline": [{"status": "criado", "at": "2026-07-02"}, {"status": "entregue", "at": "2026-07-12"}, {"status": "troca_solicitada", "at": "2026-07-16"}]},
-    {"order_id": "PED-1012", "owner_customer_key": "ana", "product": "Teclado Air", "status": "entregue", "replacement_reason": "reposição única", "timeline": [{"status": "criado", "at": "2026-07-18"}, {"status": "entregue", "at": "2026-07-22"}]},
-    {"order_id": "PED-2001", "owner_customer_key": "bruno", "product": "Monitor View 27", "status": "processando", "timeline": [{"status": "criado", "at": "2026-07-15"}]},
-    # Cadeia de trocas da Carla: mesmo Smartwatch Fit trocado três vezes. Cada elo é um pedido
-    # comum; o relacionamento é `replacement_order_id`. Só a travessia ($graphLookup) revela que
-    # é defeito recorrente de lote e não um cliente azarado — ver app/graph.py.
-    {"order_id": "PED-3001", "owner_customer_key": "carla", "product": "Smartwatch Fit", "status": "troca_solicitada", "replacement_order_id": "PED-3011", "replacement_reason": "tela não liga", "timeline": [{"status": "criado", "at": "2026-05-02"}, {"status": "enviado", "at": "2026-05-06"}, {"status": "troca_solicitada", "at": "2026-05-20"}]},
-    {"order_id": "PED-3011", "owner_customer_key": "carla", "product": "Smartwatch Fit", "status": "troca_solicitada", "replacement_order_id": "PED-3021", "replacement_reason": "mesmo defeito: tela não liga", "timeline": [{"status": "criado", "at": "2026-05-22"}, {"status": "entregue", "at": "2026-05-27"}, {"status": "troca_solicitada", "at": "2026-06-14"}]},
-    {"order_id": "PED-3021", "owner_customer_key": "carla", "product": "Smartwatch Fit", "status": "troca_solicitada", "replacement_order_id": "PED-3031", "replacement_reason": "mesmo defeito: tela não liga", "timeline": [{"status": "criado", "at": "2026-06-16"}, {"status": "entregue", "at": "2026-06-21"}, {"status": "troca_solicitada", "at": "2026-07-09"}]},
-    {"order_id": "PED-3031", "owner_customer_key": "carla", "product": "Smartwatch Fit", "status": "enviado", "replacement_reason": "terceira reposição", "timeline": [{"status": "criado", "at": "2026-07-11"}, {"status": "enviado", "at": "2026-07-13"}]},
-    {"order_id": "PED-3002", "owner_customer_key": "carla", "product": "Carregador Duo", "status": "entregue", "timeline": [{"status": "entregue", "at": "2026-07-11"}]},
-    {"order_id": "PED-4001", "owner_customer_key": "diego", "product": "Caixa Sonora Mini", "status": "processando", "timeline": [{"status": "criado", "at": "2026-07-14"}]},
-]
+# Datas de negócio RELATIVAS ao dia em que o seed/reset roda (fuso do relógio do turno, `clock.local_now`).
+# Antes eram absolutas (julho/2026) e a demo envelhecia: em novembro a logística dizia "116 dias além da data
+# prevista". As distâncias são as do roteiro original deslocado em bloco (âncora: o original 2026-07-24 vira
+# "hoje"), então ordem dos eventos, cadeia de trocas e vereditos ficam iguais: todas as previsões dos pedidos
+# não entregues já venceram (PED-1001 há 5 dias: dispara a busca web, ADR-005), todos os pedidos seguem na
+# garantia, faturas abertas vencem no futuro e a paga já venceu. Os dias de atraso crescem até o próximo reset.
 
-INVOICES = [
-    {"invoice_id": "FAT-1001", "owner_customer_key": "ana", "amount": 349.90, "due_date": "2026-08-05", "status": "aberta"},
-    {"invoice_id": "FAT-2001", "owner_customer_key": "bruno", "amount": 1899.00, "due_date": "2026-08-10", "status": "aberta"},
-    {"invoice_id": "FAT-3001", "owner_customer_key": "carla", "amount": 699.00, "due_date": "2026-07-20", "status": "paga"},
-    {"invoice_id": "FAT-4001", "owner_customer_key": "diego", "amount": 249.90, "due_date": "2026-08-15", "status": "aberta"},
-]
+
+def _day(today: date, offset: int) -> str:
+    return (today + timedelta(days=offset)).isoformat()
+
+
+def build_orders(today: date) -> list[dict]:
+    return [
+        {"order_id": "PED-1001", "owner_customer_key": "ana", "product": "Fone Pulse X", "status": "enviado", "timeline": [{"status": "criado", "at": _day(today, -14)}, {"status": "enviado", "at": _day(today, -10)}]},
+        {"order_id": "PED-1002", "owner_customer_key": "ana", "product": "Teclado Air", "status": "troca_solicitada", "replacement_order_id": "PED-1012", "replacement_reason": "tecla travando", "timeline": [{"status": "criado", "at": _day(today, -22)}, {"status": "entregue", "at": _day(today, -12)}, {"status": "troca_solicitada", "at": _day(today, -8)}]},
+        {"order_id": "PED-1012", "owner_customer_key": "ana", "product": "Teclado Air", "status": "entregue", "replacement_reason": "reposição única", "timeline": [{"status": "criado", "at": _day(today, -6)}, {"status": "entregue", "at": _day(today, -2)}]},
+        {"order_id": "PED-2001", "owner_customer_key": "bruno", "product": "Monitor View 27", "status": "processando", "timeline": [{"status": "criado", "at": _day(today, -9)}]},
+        # Cadeia de trocas da Carla: mesmo Smartwatch Fit trocado três vezes. Cada elo é um pedido
+        # comum; o relacionamento é `replacement_order_id`. Só a travessia ($graphLookup) revela que
+        # é defeito recorrente de lote e não um cliente azarado — ver app/graph.py.
+        {"order_id": "PED-3001", "owner_customer_key": "carla", "product": "Smartwatch Fit", "status": "troca_solicitada", "replacement_order_id": "PED-3011", "replacement_reason": "tela não liga", "timeline": [{"status": "criado", "at": _day(today, -83)}, {"status": "enviado", "at": _day(today, -79)}, {"status": "troca_solicitada", "at": _day(today, -65)}]},
+        {"order_id": "PED-3011", "owner_customer_key": "carla", "product": "Smartwatch Fit", "status": "troca_solicitada", "replacement_order_id": "PED-3021", "replacement_reason": "mesmo defeito: tela não liga", "timeline": [{"status": "criado", "at": _day(today, -63)}, {"status": "entregue", "at": _day(today, -58)}, {"status": "troca_solicitada", "at": _day(today, -40)}]},
+        {"order_id": "PED-3021", "owner_customer_key": "carla", "product": "Smartwatch Fit", "status": "troca_solicitada", "replacement_order_id": "PED-3031", "replacement_reason": "mesmo defeito: tela não liga", "timeline": [{"status": "criado", "at": _day(today, -38)}, {"status": "entregue", "at": _day(today, -33)}, {"status": "troca_solicitada", "at": _day(today, -15)}]},
+        {"order_id": "PED-3031", "owner_customer_key": "carla", "product": "Smartwatch Fit", "status": "enviado", "replacement_reason": "terceira reposição", "timeline": [{"status": "criado", "at": _day(today, -13)}, {"status": "enviado", "at": _day(today, -11)}]},
+        {"order_id": "PED-3002", "owner_customer_key": "carla", "product": "Carregador Duo", "status": "entregue", "timeline": [{"status": "entregue", "at": _day(today, -13)}]},
+        {"order_id": "PED-4001", "owner_customer_key": "diego", "product": "Caixa Sonora Mini", "status": "processando", "timeline": [{"status": "criado", "at": _day(today, -10)}]},
+    ]
+
+
+def build_invoices(today: date) -> list[dict]:
+    return [
+        {"invoice_id": "FAT-1001", "owner_customer_key": "ana", "amount": 349.90, "due_date": _day(today, 12), "status": "aberta"},
+        {"invoice_id": "FAT-2001", "owner_customer_key": "bruno", "amount": 1899.00, "due_date": _day(today, 17), "status": "aberta"},
+        {"invoice_id": "FAT-3001", "owner_customer_key": "carla", "amount": 699.00, "due_date": _day(today, -4), "status": "paga"},
+        {"invoice_id": "FAT-4001", "owner_customer_key": "diego", "amount": 249.90, "due_date": _day(today, 22), "status": "aberta"},
+    ]
+
 
 PRODUCT_NAMES = [
     ("Fone Pulse X", "Áudio", 349.90), ("Fone Wave Lite", "Áudio", 219.90),
@@ -78,14 +95,17 @@ LOYALTY_ACCOUNTS = [
     {"customer_key": "diego", "points": 90, "tier": "bronze", "tier_benefits": []},
 ]
 
-SHIPMENTS = [
-    {"order_id": "PED-1001", "owner_customer_key": "ana", "carrier": "Correios Express", "tracking_code": "BR123456789ANA", "estimated_delivery": "2026-07-19", "current_location": "Centro de distribuição — São Paulo, SP"},
-    {"order_id": "PED-1002", "owner_customer_key": "ana", "carrier": "Correios Express", "tracking_code": "BR223456789ANA", "estimated_delivery": "2026-07-12", "current_location": "Entregue"},
-    {"order_id": "PED-2001", "owner_customer_key": "bruno", "carrier": "Loggi", "tracking_code": "LG998877665BRU", "estimated_delivery": "2026-07-22", "current_location": "Aguardando coleta — centro de distribuição"},
-    {"order_id": "PED-3001", "owner_customer_key": "carla", "carrier": "Jadlog", "tracking_code": "JD554433221CAR", "estimated_delivery": "2026-07-18", "current_location": "Em trânsito — Campinas, SP"},
-    {"order_id": "PED-3002", "owner_customer_key": "carla", "carrier": "Jadlog", "tracking_code": "JD664433221CAR", "estimated_delivery": "2026-07-11", "current_location": "Entregue"},
-    {"order_id": "PED-4001", "owner_customer_key": "diego", "carrier": "Correios Express", "tracking_code": "BR334455667DIE", "estimated_delivery": "2026-07-23", "current_location": "Aguardando coleta — centro de distribuição"},
-]
+
+def build_shipments(today: date) -> list[dict]:
+    return [
+        {"order_id": "PED-1001", "owner_customer_key": "ana", "carrier": "Correios Express", "tracking_code": "BR123456789ANA", "estimated_delivery": _day(today, -5), "current_location": "Centro de distribuição — São Paulo, SP"},
+        {"order_id": "PED-1002", "owner_customer_key": "ana", "carrier": "Correios Express", "tracking_code": "BR223456789ANA", "estimated_delivery": _day(today, -12), "current_location": "Entregue"},
+        {"order_id": "PED-2001", "owner_customer_key": "bruno", "carrier": "Loggi", "tracking_code": "LG998877665BRU", "estimated_delivery": _day(today, -2), "current_location": "Aguardando coleta — centro de distribuição"},
+        {"order_id": "PED-3001", "owner_customer_key": "carla", "carrier": "Jadlog", "tracking_code": "JD554433221CAR", "estimated_delivery": _day(today, -6), "current_location": "Em trânsito — Campinas, SP"},
+        {"order_id": "PED-3002", "owner_customer_key": "carla", "carrier": "Jadlog", "tracking_code": "JD664433221CAR", "estimated_delivery": _day(today, -13), "current_location": "Entregue"},
+        {"order_id": "PED-4001", "owner_customer_key": "diego", "carrier": "Correios Express", "tracking_code": "BR334455667DIE", "estimated_delivery": _day(today, -1), "current_location": "Aguardando coleta — centro de distribuição"},
+    ]
+
 
 KB_ARTICLES = [
     {"article_id": "KB-001", "title": "Fone sem áudio", "category": "audio", "content": "Verifique Bluetooth, carga e dispositivo de saída. Redefina o pareamento por dez segundos."},
@@ -111,23 +131,23 @@ KB_ARTICLES = [
 # max_output_tokens é o teto de saída passado à API. Eram o mesmo campo, e a cascata de memória de longo
 # prazo (~600 tokens de contexto) passou a estourar o budget antes da primeira resposta sair.
 AGENTS = [
-    {"agent_key": "orchestrator", "label": "Orquestrador", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Classifique, roteie e consolide. Nunca responda diretamente ao cliente.", "allowed_tools": ["route", "consolidate"], "max_turn_tokens": 2600, "max_output_tokens": 700, "active": True},
-    {"agent_key": "order_agent", "label": "Pedidos", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Resolva status, troca e reembolso somente para pedidos do titular autenticado.", "allowed_tools": ["read_order", "update_order_status"], "max_turn_tokens": 4000, "max_output_tokens": 1000, "active": True},
-    {"agent_key": "product_agent", "label": "Produtos", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Recomende produtos relevantes usando somente resultados do catálogo.", "allowed_tools": ["vector_search_products"], "max_turn_tokens": 4500, "max_output_tokens": 1400, "active": True,
+    {"agent_key": "orchestrator", "label": "Orquestrador", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Classifique, roteie e consolide. Nunca responda diretamente ao cliente.", "allowed_tools": ["route", "consolidate"], "max_turn_tokens": 9000, "max_output_tokens": 700, "active": True},
+    {"agent_key": "order_agent", "label": "Pedidos", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Resolva status, troca e reembolso somente para pedidos do titular autenticado.", "allowed_tools": ["get_order", "request_order_status_change"], "max_turn_tokens": 14000, "max_output_tokens": 1000, "active": True},
+    {"agent_key": "product_agent", "label": "Produtos", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Recomende produtos relevantes usando somente resultados do catálogo.", "allowed_tools": ["search_catalog"], "max_turn_tokens": 14000, "max_output_tokens": 1400, "active": True,
      # $rerank dos 8 candidatos do catálogo, LIGADO pela medição (ADR-007): recall@1 0,417 → 0,833 por +~180 ms.
      # rerank-2.5-lite (não-Preview) empatou com o rerank-3-lite.
      "retrieval": {"rerank": {"enabled": True, "model": "rerank-2.5-lite", "pool": 8, "top_n": 4}}},
-    {"agent_key": "support_agent", "label": "Suporte", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Resolva dúvidas técnicas com evidência da base de conhecimento e transfira quando necessário.", "allowed_tools": ["hybrid_search_kb", "handoff"], "max_turn_tokens": 4500, "max_output_tokens": 1400, "active": True,
+    {"agent_key": "support_agent", "label": "Suporte", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Resolva dúvidas técnicas com evidência da base de conhecimento e transfira quando necessário.", "allowed_tools": ["search_knowledge_base", "open_support_ticket"], "max_turn_tokens": 14000, "max_output_tokens": 1400, "active": True,
      # Retrieval do KB como dado, relido a cada hop: fusão ($rankFusion, ADR-006) e $rerank
      # (Public Preview nos rerank-3*, medido e DESLIGADO, ADR-007).
      "retrieval": {"fusion": {"weights": {"vector": 1.0, "lexical": 1.0}, "per_branch_limit": 20,
                               "num_candidates": 100, "fuzzy_max_edits": 1, "synonyms": True,
                               "score_details": True},
                    "rerank": {"enabled": False, "model": "rerank-2.5-lite", "pool": 20, "top_n": 4}}},
-    {"agent_key": "billing_agent", "label": "Cobrança", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Explique faturas do titular autenticado em modo somente leitura.", "allowed_tools": ["read_invoice"], "max_turn_tokens": 4000, "max_output_tokens": 900, "active": True},
-    {"agent_key": "warranty_agent", "label": "Garantia", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Verifique cobertura de garantia por categoria e data de compra do pedido do titular autenticado, em modo somente leitura.", "allowed_tools": ["read_warranty_policy", "read_order"], "max_turn_tokens": 4000, "max_output_tokens": 900, "active": True},
-    {"agent_key": "loyalty_agent", "label": "Fidelidade", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Informe saldo de pontos, tier e benefícios do programa de fidelidade do titular autenticado, em modo somente leitura.", "allowed_tools": ["read_loyalty_account"], "max_turn_tokens": 4000, "max_output_tokens": 900, "active": True},
-    {"agent_key": "logistics_agent", "label": "Logística", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Informe transportadora, código de rastreio, localização atual e previsão de entrega do pedido do titular autenticado, em modo somente leitura.", "allowed_tools": ["read_shipment"], "max_turn_tokens": 4000, "max_output_tokens": 900, "active": True},
+    {"agent_key": "billing_agent", "label": "Cobrança", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Explique faturas do titular autenticado em modo somente leitura.", "allowed_tools": ["get_invoice"], "max_turn_tokens": 12000, "max_output_tokens": 900, "active": True},
+    {"agent_key": "warranty_agent", "label": "Garantia", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Verifique cobertura de garantia por categoria e data de compra do pedido do titular autenticado, em modo somente leitura.", "allowed_tools": ["check_warranty"], "max_turn_tokens": 12000, "max_output_tokens": 900, "active": True},
+    {"agent_key": "loyalty_agent", "label": "Fidelidade", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Informe saldo de pontos, tier e benefícios do programa de fidelidade do titular autenticado e resgate recompensas da tabela fechada quando ele pedir.", "allowed_tools": ["get_loyalty_account", "redeem_reward"], "max_turn_tokens": 12000, "max_output_tokens": 900, "active": True},
+    {"agent_key": "logistics_agent", "label": "Logística", "model": "claude-sonnet-5-5", "fallback_model": "claude-sonnet-5-5", "persona": "Informe transportadora, código de rastreio, localização atual e previsão de entrega do pedido do titular autenticado; registre reagendamento quando ele pedir.", "allowed_tools": ["get_shipment", "request_delivery_reschedule", "search_carrier_news"], "max_turn_tokens": 12000, "max_output_tokens": 900, "active": True},
 ]
 
 ROUTING_RULES = [
@@ -569,17 +589,19 @@ def kb_synonym_problems(docs: list[dict]) -> list[str]:
     return problems
 
 
-def seed_documents() -> dict[str, list[dict]]:
+def seed_documents(today: date | None = None) -> dict[str, list[dict]]:
+    """Documentos do seed. `today` (data local) ancora as datas de negócio; padrão = hoje no relógio do turno."""
     now = utcnow()
+    today = today or clock.local_now().date()
     return {
         "customers": CUSTOMERS,
-        "orders": ORDERS,
-        "invoices": INVOICES,
+        "orders": build_orders(today),
+        "invoices": build_invoices(today),
         "products_catalog": PRODUCTS,
         "kb_articles": KB_ARTICLES,
         "warranty_policies": WARRANTY_POLICIES,
         "loyalty_accounts": LOYALTY_ACCOUNTS,
-        "shipments": SHIPMENTS,
+        "shipments": build_shipments(today),
         "guardrail_denylist": (
             [{"phrase": phrase, "phrase_norm": phrase.lower(), "active": True, "area": "global",
               "category": "substring", "layer": "lexical"} for phrase in DENYLIST]

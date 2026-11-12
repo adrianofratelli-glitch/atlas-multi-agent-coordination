@@ -23,7 +23,8 @@ from .decisions import decision_trail
 from .reviews import list_reviews, override_rate, resolve_review
 from .llm import LLMGateway
 from .metrics import metrics
-from .models import AgentUpdate, ChatRequest, ChatResponse, ReviewResolution, TokenRequest
+from .models import (AgentUpdate, ChatRequest, ChatResponse, CompareRequest, HitlPolicyUpdate,
+                     ReviewResolution, TokenRequest)
 from .demo_reset import reset_customer_memory
 from .warmup import WarmupService
 from .orchestration import OrchestrationService
@@ -547,6 +548,12 @@ async def update_agent(agent_key: str, payload: AgentUpdate, store: DataStore = 
     update = {key: value for key, value in payload.model_dump().items() if value is not None}
     if not update:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "nenhuma alteração")
+    if "allowed_tools" in update:
+        from .tools import TOOLS
+        own = {name for name, spec in TOOLS.items() if spec.agent == agent_key}
+        unknown = sorted(set(update["allowed_tools"]) - own)
+        if unknown and agent_key != "orchestrator":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"tools que não pertencem a {agent_key}: {unknown}")
     changed = await store.update_one("agent_registry", {"agent_key": agent_key}, {"$set": update}, brain=True)
     if not changed:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agente não encontrado")
@@ -565,7 +572,7 @@ async def pending_reviews(
 
 
 @app.post("/api/admin/reviews/{review_id}/resolve", dependencies=[Depends(require_admin)])
-async def resolve_pending_review(review_id: str, payload: ReviewResolution, store: DataStore = Depends(get_store)):
+async def resolve_pending_review(request: Request, review_id: str, payload: ReviewResolution, store: DataStore = Depends(get_store)):
     """Fecha a pausa: grava a decisão humana (imutável) e devolve o caso ao agente.
 
     O handoff de volta é gravado em `agent_handoffs`, então a UI do cliente é notificada ao vivo
@@ -582,6 +589,20 @@ async def resolve_pending_review(review_id: str, payload: ReviewResolution, stor
         raise HTTPException(status.HTTP_404_NOT_FOUND, "revisão não encontrada ou já resolvida")
     await store.insert_one("admin_audit", {"action": "review.resolve", "target": review_id,
                                            "changes": {"decision": payload.decision}, "at": utcnow()})
+    evidence = resolved.get("evidence") or {}
+    if evidence.get("kind") == "hitl_interrupt":
+        # Pausa de verdade (LangGraph interrupt): retoma o MESMO thread do checkpoint com a decisão.
+        from . import orchestration_graph
+        customer = await store.find_one("customers", {"customer_key": resolved["customer_key"]})
+        decision = {"approved": payload.decision in ("approve", "approve_replacement", "refund"),
+                    "resolved_by": payload.resolved_by, "note": payload.note}
+        try:
+            output = await orchestration_graph.resume_turn(request.app.state.orchestrator, customer,
+                                                           resolved["conversation_id"], decision)
+        except Exception as exc:  # noqa: BLE001 — a decisão humana já está gravada; a retomada pode ser repetida
+            log("hitl_resume_failed", review_id=review_id, error=type(exc).__name__)
+            output = None
+        resolved["resumed_turn"] = output.model_dump(mode="json") if output else None
     return resolved
 
 
@@ -602,3 +623,144 @@ async def eval_runs(store: DataStore = Depends(get_store)):
     """Histórico de qualidade (GoalSuccessRate por caso) — gravado por backend/eval.py a cada execução."""
     items = await store.find_many("eval_runs", {}, limit=30, sort=[("at", -1)])
     return [{key: value for key, value in item.items() if key != "_id"} for item in items]
+
+
+# ---------------------------------------------------------------- coordenação agêntica (ADR-011/012/013)
+
+
+@app.get("/api/tools")
+async def tool_catalog(_: Annotated[dict, Depends(current_customer)], store: DataStore = Depends(get_store)):
+    """Catálogo de tools reais e quais o `agent_registry` libera para cada agente agora."""
+    from .tools import TOOLS, tools_for
+    agents_docs = await store.find_many("agent_registry", {}, brain=True, limit=20)
+    enabled = {doc["agent_key"]: [spec.name for spec in tools_for(doc, doc["agent_key"])] for doc in agents_docs}
+    return {"tools": [{"name": spec.name, "agent": spec.agent, "effect": spec.effect, "description": spec.description,
+                       "enabled": spec.name in enabled.get(spec.agent, [])} for spec in TOOLS.values()],
+            "enabled_by_agent": enabled}
+
+
+@app.get("/api/graph/topology")
+async def graph_topology(_: Annotated[dict, Depends(current_customer)], store: DataStore = Depends(get_store)):
+    """Nós e arestas para o grafo ao vivo: agentes do registry + nós do StateGraph do turno."""
+    from .orchestration import ALLOWED_REVISITS
+    agents_docs = await store.find_many("agent_registry", {}, brain=True, limit=20)
+    return {
+        "agents": [{"agent_key": d["agent_key"], "label": d.get("label"), "active": d.get("active", False),
+                    "model": d.get("model")} for d in agents_docs],
+        "graph_nodes": ["ingest", "guardrail", "memory_extract", "fanout_check", "decide", "cache_lookup",
+                        "chain_prepare", "agent_hop", "approval", "consolidate", "finalize"],
+        "allowed_revisits": [list(pair) for pair in ALLOWED_REVISITS],
+    }
+
+
+@app.get("/api/blackboard/latest")
+async def latest_blackboard(conversation_id: str = Query(min_length=4, max_length=80),
+                            customer: dict = Depends(current_customer), store: DataStore = Depends(get_store)):
+    rows = await store.find_many("turn_blackboard", {"conversation_id": conversation_id,
+                                                     "customer_key": customer["customer_key"]},
+                                 limit=1, sort=[("created_at", -1)])
+    return {key: value for key, value in rows[0].items() if key != "_id"} if rows else None
+
+
+@app.get("/api/memory-typed")
+async def typed_memory(customer: dict = Depends(current_customer), store: DataStore = Depends(get_store)):
+    """Memória por tipo: semântica (fatos), episódica (episódios), procedural (como o time trabalha)."""
+    key = customer["customer_key"]
+    facts = await store.find_many("customer_memory", {"customer_key": key, "active": True}, limit=20)
+    episodes = await store.find_many("long_term_memory", {"customer_key": key}, limit=10, sort=[("created_at", -1)])
+    agents_docs = await store.find_many("agent_registry", {"active": True}, brain=True, limit=20)
+    rules = await store.find_many("routing_rules", {}, brain=True, limit=50)
+    policies = await store.find_many("hitl_policies", {}, brain=True, limit=20)
+    strip = lambda doc: {k: v for k, v in doc.items() if k not in ("_id", "embedding", "embedding_v2")}  # noqa: E731
+    return {
+        "semantic": {"collection": "customer_memory", "items": [strip(d) for d in facts]},
+        "episodic": {"collection": "long_term_memory", "items": [strip(d) for d in episodes]},
+        "procedural": {"collections": ["agent_registry", "routing_rules", "hitl_policies"],
+                       "agents": [{"agent_key": d["agent_key"], "persona": d.get("persona"),
+                                   "allowed_tools": d.get("allowed_tools")} for d in agents_docs],
+                       "routing_rules": len(rules),
+                       "hitl_policies": [strip(d) for d in policies]},
+    }
+
+
+@app.get("/api/admin/hitl-policies", dependencies=[Depends(require_admin)])
+async def hitl_policies(store: DataStore = Depends(get_store)):
+    items = await store.find_many("hitl_policies", {}, brain=True, limit=50)
+    return [{k: v for k, v in item.items() if k != "_id"} for item in items]
+
+
+@app.patch("/api/admin/hitl-policies/{policy_id}", dependencies=[Depends(require_admin)])
+async def update_hitl_policy(policy_id: str, payload: HitlPolicyUpdate, store: DataStore = Depends(get_store)):
+    changed = await store.update_one("hitl_policies", {"policy_id": policy_id}, {"$set": {"active": payload.active}}, brain=True)
+    if not changed:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "política não encontrada")
+    await store.insert_one("admin_audit", {"action": "hitl.update", "target": policy_id,
+                                           "changes": {"active": payload.active}, "at": utcnow()})
+    return {"ok": True, "policy_id": policy_id, "active": payload.active}
+
+
+@app.post("/api/compare")
+async def compare_architectures(request: Request, payload: CompareRequest,
+                                customer: Annotated[dict, Depends(current_customer)], store: DataStore = Depends(get_store)):
+    """A/B single × multi na mesma pergunta, com escritas simuladas e juiz LLM."""
+    if not limiter.allow(request_identity_key(request, f"compare:{customer['customer_key']}")):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "limite de requisições excedido")
+    from .compare import compare
+    from .guardrails import check_input
+    guard = await check_input(store, payload.message, customer, llm=request.app.state.orchestrator.llm, budget=None,
+                              agent_doc=None, skip_semantic=True)
+    if guard.blocked:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "mensagem bloqueada pela política de segurança")
+    return await asyncio.wait_for(compare(store, request.app.state.orchestrator.llm, customer, payload.message),
+                                  timeout=settings.turn_deadline_seconds * 2)
+
+
+@app.post("/api/demo/crash-resume")
+async def demo_crash_resume(request: Request, payload: ChatRequest,
+                            customer: Annotated[dict, Depends(current_customer)], store: DataStore = Depends(get_store)):
+    """Derruba o turno de propósito antes do 2º hop e retoma do checkpoint no Atlas.
+
+    Prova o que o checkpointer garante: o hop concluído (e sua escrita) não roda de novo."""
+    if not settings.demo_token_issuance_enabled:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "demo desabilitada")
+    if not limiter.allow(request_identity_key(request, f"crash:{customer['customer_key']}")):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "limite de requisições excedido")
+    from . import orchestration_graph
+    service = request.app.state.orchestrator
+    conversation_id = payload.conversation_id or f"conv-{uuid.uuid4().hex[:12]}"
+    crashed_at = None
+    try:
+        output = await orchestration_graph.run_turn(service, payload.message, customer, conversation_id,
+                                                    crash_before_hop=1)
+    except orchestration_graph.SimulatedCrash as exc:
+        crashed_at = str(exc)
+        graph = orchestration_graph.get_graph(store.settings)
+        config = {"configurable": {"thread_id": orchestration_graph.checkpoint_thread_id(customer, conversation_id)}}
+        snapshot = await graph.aget_state(config)
+        before = {"next_nodes": list(snapshot.next), "checkpoint_id": snapshot.config["configurable"].get("checkpoint_id"),
+                  "hops_done": len((snapshot.values or {}).get("board") or [])}
+        output = await orchestration_graph.resume_after_crash(service, customer, conversation_id)
+        handoffs = await store.find_many("agent_handoffs", {"conversation_id": conversation_id}, limit=20)
+        return {"crashed": True, "crash": crashed_at, "checkpoint_before_resume": before,
+                "handoffs_written": len(handoffs), "result": output.model_dump(mode="json") if output else None}
+    return {"crashed": False, "note": "o turno terminou antes do 2º hop (cadeia de um agente)",
+            "result": output.model_dump(mode="json")}
+
+
+# ---------------------------------------------------------------- A2A (Agent2Agent 1.0): agentes como cards
+
+@app.get("/.well-known/agent-card.json")
+async def a2a_agent_card(request: Request, store: DataStore = Depends(get_store)):
+    """Card público do serviço coordenado, gerado do `agent_registry` (registry é dado → card é query)."""
+    from .agent_cards import system_card
+    agents_docs = await store.find_many("agent_registry", {}, brain=True, limit=50)
+    return JSONResponse(system_card(agents_docs, settings.public_base_url or str(request.base_url).rstrip("/")))
+
+
+@app.get("/api/agents/{agent_key}/card")
+async def a2a_single_agent_card(agent_key: str, request: Request, store: DataStore = Depends(get_store)):
+    from .agent_cards import agent_card
+    doc = await store.find_one("agent_registry", {"agent_key": agent_key}, brain=True)
+    if not doc or not doc.get("active", True):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "agente desconhecido ou inativo")
+    return JSONResponse(agent_card(doc, settings.public_base_url or str(request.base_url).rstrip("/")))

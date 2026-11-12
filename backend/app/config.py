@@ -52,7 +52,9 @@ class Settings(BaseSettings):
     auth_required: bool = True
     demo_token_issuance_enabled: bool = True
     admin_api_key: str = "admin-demo"
-    global_turn_token_budget: int = 20000
+    global_turn_token_budget: int = 60000
+    # URL pública usada nos agent cards A2A (atrás do nginx); vazio = a URL da requisição.
+    public_base_url: str = ""
     turn_deadline_seconds: int = 120
     rate_limit_requests: int = 30
     rate_limit_window_seconds: int = 60

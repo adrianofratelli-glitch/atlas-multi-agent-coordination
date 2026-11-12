@@ -621,6 +621,8 @@ class DataStore:
             "shipments": [[("order_id", ASCENDING)], [("owner_customer_key", ASCENDING)]],
             "warranty_policies": [[("category", ASCENDING)]],
             "agent_conversations": [[("conversation_id", ASCENDING)], [("updated_at", ASCENDING)]],
+            # Quadro do turno (blackboard, ADR-011): uma entrada por turno, expira com a conversa.
+            "turn_blackboard": [[("turn_id", ASCENDING)], [("created_at", ASCENDING)], [("conversation_id", ASCENDING), ("created_at", ASCENDING)]],
             "customer_memory": [[("customer_key", ASCENDING), ("active", ASCENDING)]],
             "agent_handoffs": [[("conversation_id", ASCENDING), ("at", ASCENDING)], [("at", ASCENDING)]],
             "agent_traces": [[("conversation_id", ASCENDING), ("at", ASCENDING)], [("at", ASCENDING)]],
@@ -647,9 +649,10 @@ class DataStore:
             "agent_decisions": [[("decision_id", ASCENDING)], [("customer_key", ASCENDING), ("at", ASCENDING)], [("subject_id", ASCENDING), ("at", ASCENDING)]],
             "agent_audit_events": [[("decision_id", ASCENDING)], [("customer_key", ASCENDING), ("at", ASCENDING)], [("subject_id", ASCENDING), ("at", ASCENDING)]],
         }
-        unique = {("customers", 0), ("orders", 0), ("agent_decisions", 0), ("agent_audit_events", 0), ("pending_reviews", 0), ("invoices", 0), ("agent_conversations", 0), ("guardrail_denylist", 0), ("loyalty_accounts", 0), ("shipments", 0), ("warranty_policies", 0)}
+        unique = {("turn_blackboard", 0), ("customers", 0), ("orders", 0), ("agent_decisions", 0), ("agent_audit_events", 0), ("pending_reviews", 0), ("invoices", 0), ("agent_conversations", 0), ("guardrail_denylist", 0), ("loyalty_accounts", 0), ("shipments", 0), ("warranty_policies", 0)}
         ttl = {
             ("agent_conversations", 1): 86400,
+            ("turn_blackboard", 1): 86400,
             ("agent_handoffs", 1): 30 * 86400,
             ("agent_traces", 1): 30 * 86400,
             ("semantic_cache", 1): 0,

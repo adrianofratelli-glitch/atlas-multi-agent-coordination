@@ -80,6 +80,11 @@ async def seed(store: DataStore, *, create_indexes: bool = True) -> list[str]:
         await store.replace_one(
             "routing_rules", {"intent": rule["intent"]}, rule, brain=True, upsert=True
         )
+    from app.hitl import DEFAULT_POLICIES
+    for policy in DEFAULT_POLICIES:
+        # Política de aprovação humana é dado (ADR-012): ligar/desligar é update_one.
+        await store.replace_one("hitl_policies", {"policy_id": policy["policy_id"]}, policy, brain=True, upsert=True)
+    messages.append(f"hitl_policies: {len(DEFAULT_POLICIES)} políticas")
     for scenario in DEMO_SCENARIOS:
         await store.replace_one(
             "demo_scenarios", {"scenario_id": scenario["scenario_id"]}, scenario, brain=True, upsert=True
@@ -94,7 +99,7 @@ async def seed(store: DataStore, *, create_indexes: bool = True) -> list[str]:
     await store.replace_one(
         "model_config",
         {"key": "default"},
-        {"key": "default", "default_model": "claude-sonnet-5-5", "global_turn_tokens": 26000},
+        {"key": "default", "default_model": "claude-sonnet-5-5", "global_turn_tokens": 60000},
         brain=True,
         upsert=True,
     )

@@ -19,6 +19,16 @@ class AgentUpdate(BaseModel):
     persona: str | None = Field(default=None, max_length=4000)
     max_turn_tokens: int | None = Field(default=None, ge=128, le=8192)
     max_output_tokens: int | None = Field(default=None, ge=128, le=8192)
+    # Tools liberadas ao agente (tool calling real): desligar uma é um update_one, sem deploy.
+    allowed_tools: list[str] | None = Field(default=None, max_length=20)
+
+
+class CompareRequest(BaseModel):
+    message: str = Field(min_length=3, max_length=2000)
+
+
+class HitlPolicyUpdate(BaseModel):
+    active: bool
 
 
 class OrderStatusUpdate(BaseModel):
@@ -47,7 +57,7 @@ def _jsonable(value: Any) -> Any:
 
 
 class TimelineEvent(BaseModel):
-    category: Literal["agent", "memory", "guardrail", "cache", "handoff", "fanout", "web"]
+    category: Literal["agent", "memory", "guardrail", "cache", "handoff", "fanout", "web", "coordination"]
     title: str
     agent: str | None = None
     collection: str | None = None
@@ -93,11 +103,15 @@ class ChatResponse(BaseModel):
     # só aparece preenchido quando algo realmente falhou, então nenhuma resposta normal muda.
     degraded: bool = False
     degraded_reason: str | None = None
+    # Coordenação (ADR-011/012): id do quadro do turno, caminho de agentes e pausa para aprovação humana.
+    turn_id: str | None = None
+    agent_path: list[str] = Field(default_factory=list)
+    awaiting_approval: dict[str, Any] | None = None
 
 
 class ReviewResolution(BaseModel):
     """Resolução de um caso escalado. `decision` é fechada: o analista escolhe entre encaminhamentos
     conhecidos, não digita uma ação livre que ninguém depois consegue agregar."""
-    decision: Literal["quality_analysis", "approve_replacement", "refund", "reject"]
+    decision: Literal["quality_analysis", "approve_replacement", "refund", "reject", "approve"]
     resolved_by: str = Field(min_length=2, max_length=80)
     note: str = Field(default="", max_length=2000)

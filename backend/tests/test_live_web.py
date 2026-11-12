@@ -13,9 +13,11 @@ import os
 if os.getenv("LIVE") == "1":  # antes de qualquer get_settings(): env vence o .env
     os.environ["LANGFUSE_PUBLIC_KEY"] = os.environ["LANGFUSE_SECRET_KEY"] = ""
 
+from datetime import date
+
 import pytest
 
-from app import web_search
+from app import clock, web_search
 from app.config import Settings
 from app.database import DataStore
 from app.llm import LLMGateway
@@ -103,12 +105,17 @@ async def test_store_domain_never_searches_the_web(live, message):
 
 
 async def test_warranty_days_left_are_computed_not_guessed(live):
-    _, svc = live
+    store, svc = live
     out = await svc.run_turn("a garantia do PED-1001 ainda vale? quantos dias faltam?", ANA, None)
     show("garantia", out)
     doc = next(e.result for e in out.timeline if e.agent == "warranty_agent" and isinstance(e.result, dict)
                and "days_left" in e.result)
-    assert doc["expires_at"] == "2027-07-10" and str(doc["days_left"]) in out.response
+    # datas do seed são relativas ao dia do seed: a expectativa sai do pedido gravado, não de uma data fixa
+    order = await store.find_one("orders", {"order_id": "PED-1001", "owner_customer_key": "ana"})
+    purchased = date.fromisoformat(next(t["at"] for t in order["timeline"] if t["status"] == "criado"))
+    assert doc["expires_at"] == purchased.replace(year=purchased.year + 1).isoformat()
+    assert doc["days_left"] == (date.fromisoformat(doc["expires_at"]) - clock.local_now().date()).days
+    assert doc["covered"] is True and str(doc["days_left"]) in out.response
     assert web_events(out) == [] and "foge" not in out.response   # a continuação não é "fora de escopo"
 
 
